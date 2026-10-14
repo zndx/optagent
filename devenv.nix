@@ -8,8 +8,50 @@
   packages = with pkgs; [
     curl
     git
+    gnumake
     just
+    pkg-config
   ];
+
+  # Warehouse front. Same kind of postmaster Gaius (:5444) and Signals
+  # (:5455) use for impala_fdw. ElectricSQL PGlite cannot load the .so.
+  # Thrift and Boost stay out of `packages`. The FDW task pins Nix
+  # thrift so the .so does not link the Impala toolchain's 0.16.
+  services.postgres = {
+    enable = true;
+    package = pkgs.postgresql_16;
+    port = 5466;
+    listen_addresses = "127.0.0.1";
+    initialDatabases = [{ name = "optagent"; }];
+  };
+
+  tasks."impala-fdw:build" = {
+    exec = ''
+      set -euo pipefail
+      export THRIFT_HOME="${pkgs.thrift}"
+      export BOOST_HOME="${pkgs.boost.dev}"
+      export PG_DEV="${pkgs.postgresql_16.dev}"
+      export PG_OUT="${pkgs.postgresql_16}"
+      export PG_LIB="${pkgs.postgresql_16.lib}"
+      export CC="${pkgs.stdenv.cc}/bin/cc"
+      export CXX="${pkgs.stdenv.cc}/bin/c++"
+      export MAKE="${pkgs.gnumake}/bin/make"
+      export SIG_KRB5_INC="${pkgs.krb5.dev}/include"
+      export SIG_KRB5_LIB="${pkgs.krb5.lib}/lib"
+      export SIG_SASL_INC="${pkgs.cyrus_sasl.dev}/include"
+      export SIG_SASL_LIB="${pkgs.cyrus_sasl.out}/lib"
+      export SIG_SSL_LIB="${pkgs.openssl.out}/lib"
+      exec ${config.devenv.root}/scripts/warehouse/build_impala_fdw.sh
+    '';
+  };
+
+  tasks."impala-fdw:install" = {
+    exec = ''
+      set -euo pipefail
+      exec ${config.devenv.root}/scripts/warehouse/install_impala_fdw.sh
+    '';
+    after = [ "impala-fdw:build" ];
+  };
 
   languages.python = {
     enable = true;

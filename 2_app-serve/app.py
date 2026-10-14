@@ -58,6 +58,17 @@ def render_page(status: dict | None, greeting: str) -> str:
         shown = str(status.get("greeting", greeting))
         version = str(status.get("prototype_version", ""))
     version_line = f"<p>Prototype version {html.escape(version)}</p>" if version else ""
+    warehouse = None if status is None else status.get("warehouse")
+    if not isinstance(warehouse, dict):
+        warehouse_html = "<p>Warehouse status was not recorded.</p>"
+    else:
+        warehouse_html = (
+            f"<p>Postgres {html.escape(str(warehouse.get('postgres', '')))}. "
+            f"FDW {html.escape(str(warehouse.get('fdw', '')))}. "
+            f"Server {html.escape(str(warehouse.get('server') or 'not configured'))}.</p>"
+            "<p>Kudu foreign tables use access kudu_scan. "
+            "Iceberg tables and UNION views use access impala_sql.</p>"
+        )
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -101,9 +112,13 @@ def render_page(status: dict | None, greeting: str) -> str:
       <p>Cloudera Machine Learning runs these steps from <code>.project-metadata.yaml</code>:</p>
       <ol>
         <li>Install dependencies</li>
+        <li>Register Impala FDW</li>
         <li>Prepare project</li>
         <li>Serve this application</li>
       </ol>
+    </div>
+    <div class="card">
+      {warehouse_html}
     </div>
   </main>
 </body>

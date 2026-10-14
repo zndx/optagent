@@ -11,7 +11,7 @@ entries:
   - title: Optagent
     label: optagent
     short_description: |
-      AMP project template. Devenv locally, numbered jobs in CML.
+      AMP project template. Impala FDW on PostgreSQL 16 for Kudu and Iceberg.
     long_description: |
       Optagent is a project template for a Cloudera Machine Learning
       Applied ML Prototype. Launching it installs Python dependencies,

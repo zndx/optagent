@@ -1,3 +1,4 @@
 # Runtime dependencies for the CML install job.
 # Keep these aligned with [project].dependencies in pyproject.toml.
 # The install job does not build this package. Scripts import it from src/.
+psycopg[binary]>=3.2

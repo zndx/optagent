@@ -24,13 +24,20 @@ def status_path(root: Path) -> Path:
     return root / path
 
 
-def write_status(path: Path, greeting: str, version: str) -> Path:
+def write_status(
+    path: Path,
+    greeting: str,
+    version: str,
+    warehouse: dict | None = None,
+) -> Path:
     payload = {
         "name": "Optagent",
         "prototype_version": version,
         "greeting": greeting,
         "written_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
+    if warehouse is not None:
+        payload["warehouse"] = warehouse
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path

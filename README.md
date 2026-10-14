@@ -22,7 +22,9 @@ Project template for a Cloudera Machine Learning AMP. Copy it when a new prototy
 
 ## Overview
 
-Optagent launches as an Applied ML Prototype. The workbench installs `requirements.txt`, writes a status snapshot, and serves that snapshot. On a workstation, devenv runs those same two scripts. The shell is Python 3.12 with uv. CML does not read `devenv.nix`.
+Optagent launches as an Applied ML Prototype. The workbench installs `requirements.txt`, registers `impala_fdw` when the worker can build it, writes a status snapshot, and serves that snapshot. On a workstation, devenv runs PostgreSQL 16 on port 5466 and the same scripts. The shell is Python 3.12 with uv. CML does not read `devenv.nix`.
+
+Kudu and Iceberg stay where they are. Postgres foreign tables reach them through Impala. Kudu scans and writes use `kudu_scan`. Iceberg tables and UNION views use `impala_sql`. The extension is [`weathership/impala_fdw`](https://github.com/weathership/impala_fdw), the same repository Gaius and Signals build. Product auth is Kerberos.
 
 ```mermaid
 flowchart LR
@@ -60,7 +62,13 @@ New prototypes need the same CML shape every time: a catalog entry, a `.project-
    devenv up
    ```
 
-   Then open <http://127.0.0.1:8123>. `just prepare` rewrites `assets/data/status.json`. `just app` serves the page without the process supervisor.
+   Then open <http://127.0.0.1:8123>. With Postgres up, register the warehouse wrapper:
+
+   ```bash
+   just impala-fdw-install
+   ```
+
+   `just prepare` rewrites `assets/data/status.json`. `just app` serves the page without the process supervisor.
 
 4. To launch it from a CML AMP catalog, add this repository as a catalog source and set the catalog file to [`catalog-entry.yaml`](catalog-entry.yaml). Site Administration steps are in [Adding a catalog](https://docs.cloudera.com/machine-learning/cloud/manage-amp/topics/ml-amp-add-catalog.html).
 
@@ -69,7 +77,8 @@ New prototypes need the same CML shape every time: a catalog entry, a `.project-
    | Step | Type | What it does |
    | --- | --- | --- |
    | Install Dependencies | `create_job` + `run_job` | Installs `requirements.txt` into the workbench Python |
-   | Prepare project | `create_job` + `run_job` | Writes `assets/data/status.json` |
+   | Register Impala FDW | `create_job` + `run_job` | Builds and registers `impala_fdw` when PostgreSQL headers and Thrift are on the worker. A stock PBJ image skips this and the launch continues |
+   | Prepare project | `create_job` + `run_job` | Writes `assets/data/status.json`, including whether the FDW is loaded |
    | Optagent | `start_application` | Serves the snapshot on `CDSW_APP_PORT` |
 
    The jobs stay in the project. Run **Install Dependencies** again from the Jobs tab when `requirements.txt` changes.
@@ -90,7 +99,9 @@ Component detail is in [docs/architecture.md](docs/architecture.md).
 
 | Path | Description |
 | --- | --- |
-| `src/optagent/` | Snapshot writer shared by the job and the application |
+| `src/optagent/` | Snapshot writer and Impala FDW registration SQL |
+| `components/impala_fdw/` | `weathership/impala_fdw` submodule (`trunk`) |
+| `scripts/warehouse/` | Build, install, and CML registration entrypoint |
 | `0_session-install-dependencies/` | CML job that installs `requirements.txt` |
 | `1_job-prepare-project/` | CML job that writes the status snapshot |
 | `2_app-serve/` | CML application that serves the snapshot |

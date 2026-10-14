@@ -13,6 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 ENTRYPOINTS = (
     "0_session-install-dependencies/install-dependencies.py",
+    "scripts/warehouse/register_impala_fdw.py",
     "1_job-prepare-project/job.py",
     "2_app-serve/app.py",
 )
@@ -37,7 +38,7 @@ def test_amp_scripts_exist() -> None:
     assert "type: run_session" not in metadata
     assert re.search(r"(?m)^[ ]*environment:\s*$", metadata) is None
     jobs = metadata.split("type: create_job")[1:]
-    assert len(jobs) == 2
+    assert len(jobs) == 3
     for job in jobs:
         block = job.split("type: run_job", 1)[0]
         assert "kernel: python3" in block
@@ -99,6 +100,13 @@ def test_devenv_is_the_local_runtime() -> None:
     assert 'path = "/health"' in nix
     assert 'tasks."devenv:enterTest"' in nix
     assert "python -m pytest" in nix
+    assert "services.postgres" in nix
+    assert "package = pkgs.postgresql_16" in nix
+    assert "port = 5466" in nix
+    assert 'tasks."impala-fdw:build"' in nix
+    assert 'tasks."impala-fdw:install"' in nix
+    assert "pkgs.thrift" in nix
+    assert "pkgs.boost.dev" in nix
     assert "1_job-prepare-project/job.py" in nix
     assert "2_app-serve/app.py" in nix
     assert not (ROOT / "deploy" / "docker-compose.yml").exists()

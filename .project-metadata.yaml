@@ -9,9 +9,9 @@
 
 name: Optagent
 description: >
-  Project template for a Cloudera Machine Learning AMP. Devenv runs the
-  same prepare job and application locally. Launching the prototype
-  installs dependencies, writes a status snapshot, and serves it.
+  Project template for a Cloudera Machine Learning AMP. PostgreSQL 16
+  loads impala_fdw so SQL can read Kudu and Iceberg in place. Devenv
+  runs the same jobs locally.
 author: zndx
 specification_version: "1.0"
 prototype_version: "0.1.0"
@@ -25,6 +25,34 @@ environment_variables:
   OPTAGENT_STATUS_PATH:
     default: "assets/data/status.json"
     description: "Project-relative path where the prepare job writes the status snapshot."
+    required: false
+  OPTAGENT_DB_URL:
+    default: "postgres://127.0.0.1:5466/optagent"
+    description: "PostgreSQL that loads impala_fdw. Devenv listens on port 5466."
+    required: false
+  IMPALA_HS2_HOST:
+    default: ""
+    description: "Impala HS2 host. Empty skips CREATE SERVER. Product auth is Kerberos."
+    required: false
+  IMPALA_HS2_PORT:
+    default: "21050"
+    description: "Impala HS2 port."
+    required: false
+  KUDU_MASTERS:
+    default: ""
+    description: "Kudu master list. Empty uses IMPALA_HS2_HOST:7051 when a server is created."
+    required: false
+  IMPALA_KRB_PRINCIPAL:
+    default: ""
+    description: "Kerberos principal for the FDW user mapping. Empty skips the mapping."
+    required: false
+  IMPALA_KRB_KEYTAB:
+    default: ""
+    description: "Keytab path for the FDW user mapping."
+    required: false
+  IMPALA_FDW_AUTH:
+    default: "kerberos"
+    description: "FDW auth. The only accepted value is kerberos."
     required: false
 
 runtimes:
@@ -54,6 +82,22 @@ tasks:
   - type: run_job
     entity_label: install_dependencies
     short_summary: Install runtime dependencies from requirements.txt.
+
+  - type: create_job
+    name: Register Impala FDW
+    entity_label: register_impala_fdw
+    script: scripts/warehouse/register_impala_fdw.py
+    arguments: ""
+    kernel: python3
+    cpu: 1
+    memory: 4
+    short_summary: Create the job that registers impala_fdw on PostgreSQL 16.
+    environment_variables:
+      TASK_TYPE: CREATE/RUN_JOB
+
+  - type: run_job
+    entity_label: register_impala_fdw
+    short_summary: Build impala_fdw when the toolchain is present and register it.
 
   - type: create_job
     name: Prepare project

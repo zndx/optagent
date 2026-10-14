@@ -12,3 +12,7 @@ prepare:
 # Serve the application on port 8123. CML sets CDSW_APP_PORT instead.
 app:
     uv run python 2_app-serve/app.py
+
+# Build impala_fdw against PostgreSQL 16, then register it on :5466.
+impala-fdw-install:
+    devenv tasks run impala-fdw:install

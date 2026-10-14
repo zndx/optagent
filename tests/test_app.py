@@ -45,6 +45,8 @@ def test_prepare_job_writes_the_snapshot(tmp_path: Path, monkeypatch) -> None:
     assert payload["greeting"] == "good morning"
     assert payload["prototype_version"] == "0.1.0"
     assert payload["written_at"].endswith("Z")
+    assert payload["warehouse"]["postgres"] in {"ok", "unreachable", "psycopg-missing"}
+    assert payload["warehouse"]["fdw"] in {"impala_fdw", "absent"}
 
 
 def test_page_reports_a_missing_snapshot(tmp_path: Path, monkeypatch) -> None:

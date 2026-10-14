@@ -36,10 +36,16 @@ sys.path.insert(0, str(ROOT / "src"))
 
 from optagent import __version__
 from optagent.status import greeting_from_env, status_path, write_status
+from optagent.warehouse import probe_warehouse
 
 
 def main() -> None:
-    path = write_status(status_path(ROOT), greeting_from_env(), __version__)
+    path = write_status(
+        status_path(ROOT),
+        greeting_from_env(),
+        __version__,
+        warehouse=probe_warehouse(),
+    )
     print(f"wrote {path}", flush=True)
 
 
