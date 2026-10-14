@@ -46,6 +46,24 @@ devenv tasks run impala-fdw:install
 
 Foreign tables are not created by the template. A Kudu table uses `access 'kudu_scan'`. An Iceberg table or a UNION view uses `access 'impala_sql'`.
 
+## Span ledger
+
+`span` is the relation readers query. It is not a copy of a Signals series and it is not Gaius `cognition_thoughts`.
+
+| Relation | Store | FDW access | Write |
+| --- | --- | --- | --- |
+| `optagent.span_tier0` | Kudu | `kudu_scan` | INSERT |
+| `optagent.span_tier1` | Iceberg | `impala_sql` | none |
+| `optagent.span` | Impala view | `impala_sql` | none |
+
+The view is tier0 `UNION ALL` tier1, and a tier1 hour still present in tier0 is masked. That is the same hour rule Signals uses for `tx` and `hx_reasoning`. `impala_fdw_exec` creates the view. tier1 is a catalog table. The module does not emit `CREATE TABLE … STORED AS ICEBERG`.
+
+Columns on every tier, schema-identical: `epoch_hour`, `span_id`, `agent`, `kind`, `seq`, `opened_ns`, `summary`, `body`, `body_uri`. `kind` is `span` or `synthesis`. `body` is the hot transcript. After the hour settles, the body lives on tier1 and `body_uri` can name the object.
+
+## Sessions
+
+The session browser is the local agentsview checkout `../../rch/oss-agentsview` (`weathership/oss-agentsview`). `go.work` uses that tree. `ui/go.mod` replaces `go.kenn.io/agentsview` with it. `ui/package.json` links `agentsview-frontend` to `frontend/`. The shell at `/sessions` names that checkout. The ledger pages follow the signals-ui chrome: a dark header and one content column for Ledger, Tiers, and Sessions.
+
 ## Request path
 
 `GET /health` returns `ok`. `GET /` renders the greeting. When the snapshot exists, the page shows the recorded greeting, the prototype version, and the time the job wrote the file. When it does not, the page says the prepare job has not run and shows `OPTAGENT_GREETING`.

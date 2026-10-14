@@ -1,0 +1,8 @@
+{
+  "name": "optagent-ui",
+  "private": true,
+  "description": "Optagent shell. The session UI is the local agentsview frontend, linked editable from this checkout.",
+  "dependencies": {
+    "agentsview-frontend": "file:../../../rch/oss-agentsview/frontend"
+  }
+}

@@ -41,11 +41,59 @@ def project_root() -> Path:
 ROOT = project_root()
 sys.path.insert(0, str(ROOT / "src"))
 
+from optagent.ledger import DATABASE, SURFACE, TIER0, TIER1
 from optagent.status import greeting_from_env, read_status, status_path
 
 
 def app_port() -> int:
     return int(os.environ.get("PORT") or os.environ.get("CDSW_APP_PORT") or "8123")
+
+
+def _shell(active: str, body: str) -> str:
+    def link(href: str, label: str) -> str:
+        cls = " active" if active == href else ""
+        return f'<a class="nav-link{cls}" href="{href}">{label}</a>'
+
+    return f"""<!DOCTYPE html>
+<html lang="en" data-mode="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Optagent</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    html, body {{ margin: 0; min-height: 100%; background: #f4f6f8; color: #1c2430;
+      font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
+    .chrome {{ display: flex; align-items: center; gap: 16px; height: 56px;
+      padding: 0 20px; background: #101418; color: #e5e8ec; border-bottom: 1px solid #30363c; }}
+    .chrome a {{ color: #9fa5ac; text-decoration: none; }}
+    .chrome a:hover, .chrome a.active {{ color: #e5e8ec; }}
+    .brand {{ color: #e5e8ec; font-weight: 600; font-size: 18px; letter-spacing: 0.04em; }}
+    .nav {{ display: flex; gap: 16px; }}
+    main {{ max-width: 52rem; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }}
+    .card {{ background: white; border: 1px solid #d5dde6; border-radius: 8px;
+      padding: 1rem 1.25rem; margin-top: 1rem; }}
+    table {{ width: 100%; border-collapse: collapse; }}
+    th, td {{ text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e3e8ee; }}
+    code {{ font-size: 0.92em; }}
+    a {{ color: #0b6b4a; }}
+  </style>
+</head>
+<body>
+  <header class="chrome">
+    <a class="brand" href="/">Optagent</a>
+    <nav class="nav">
+      {link("/", "Ledger")}
+      {link("/tiers", "Tiers")}
+      {link("/sessions", "Sessions")}
+    </nav>
+  </header>
+  <main>
+    {body}
+  </main>
+</body>
+</html>
+"""
 
 
 def render_page(status: dict | None, greeting: str) -> str:
@@ -69,41 +117,15 @@ def render_page(status: dict | None, greeting: str) -> str:
             "<p>Kudu foreign tables use access kudu_scan. "
             "Iceberg tables and UNION views use access impala_sql.</p>"
         )
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Optagent</title>
-  <style>
-    body {{
-      margin: 0;
-      font-family: "Source Sans 3", "Segoe UI", sans-serif;
-      background: #f4f7f6;
-      color: #1c2b24;
-    }}
-    main {{
-      max-width: 40rem;
-      margin: 0 auto;
-      padding: 2rem 1.25rem 3rem;
-    }}
-    h1 {{ font-weight: 600; letter-spacing: -0.02em; }}
-    .card {{
-      background: white;
-      border: 1px solid #d5e0da;
-      border-radius: 8px;
-      padding: 1rem 1.25rem;
-      margin-top: 1rem;
-    }}
-    ol {{ padding-left: 1.2rem; }}
-    a {{ color: #0b6b4a; }}
-  </style>
-</head>
-<body>
-  <main>
-    <h1>Optagent</h1>
+    body = f"""
+    <h1>Ledger</h1>
     <p>{html.escape(shown)}</p>
     {version_line}
+    <div class="card">
+      <p><code>{DATABASE}.{SURFACE}</code> is the transparent surface.
+      Hot hours are <code>{TIER0}</code> on Kudu. Settled hours are <code>{TIER1}</code> on Iceberg.
+      A hot hour still in tier0 is masked out of tier1.</p>
+    </div>
     <div class="card">
       <p>{html.escape(recorded)}</p>
       <p><a href="/health">Health</a></p>
@@ -120,10 +142,51 @@ def render_page(status: dict | None, greeting: str) -> str:
     <div class="card">
       {warehouse_html}
     </div>
-  </main>
-</body>
-</html>
-"""
+    """
+    return _shell("/", body)
+
+
+def render_tiers() -> str:
+    rows = (
+        (TIER0, "Kudu", "kudu_scan", "INSERT and hot scan"),
+        (TIER1, "Iceberg", "impala_sql", "Settled hours. Read only."),
+        (SURFACE, "Impala view", "impala_sql", "tier0 UNION tier1, hot hours masked"),
+    )
+    rendered = "\n".join(
+        "<tr>"
+        + "".join(f"<td><code>{html.escape(cell)}</code></td>" for cell in row)
+        + "</tr>"
+        for row in rows
+    )
+    body = f"""
+    <h1>Tiers</h1>
+    <div class="card">
+      <table>
+        <thead><tr><th>Relation</th><th>Store</th><th>Access</th><th>Role</th></tr></thead>
+        <tbody>{rendered}</tbody>
+      </table>
+    </div>
+    <div class="card">
+      <p>Writes land in <code>{TIER0}</code>. <code>{TIER1}</code> is registered in the catalog,
+      not created with Impala <code>STORED AS ICEBERG</code>.</p>
+    </div>
+    """
+    return _shell("/tiers", body)
+
+
+def render_sessions() -> str:
+    body = """
+    <h1>Sessions</h1>
+    <div class="card">
+      <p>Session inspection starts from the agentsview checkout
+      <code>../../rch/oss-agentsview</code>
+      (<code>git@github.com:weathership/oss-agentsview.git</code>).</p>
+      <p><code>go.work</code> and <code>ui/go.mod</code> replace
+      <code>go.kenn.io/agentsview</code> with that working tree.
+      <code>ui/package.json</code> links <code>agentsview-frontend</code> the same way.</p>
+    </div>
+    """
+    return _shell("/sessions", body)
 
 
 def response_for(method: str, path: str) -> tuple[int, str, bytes]:
@@ -135,6 +198,10 @@ def response_for(method: str, path: str) -> tuple[int, str, bytes]:
     if route in ("/", "/index.html"):
         page = render_page(read_status(status_path(ROOT)), greeting_from_env())
         return 200, "text/html; charset=utf-8", page.encode("utf-8")
+    if route == "/tiers":
+        return 200, "text/html; charset=utf-8", render_tiers().encode("utf-8")
+    if route == "/sessions":
+        return 200, "text/html; charset=utf-8", render_sessions().encode("utf-8")
     return 404, "text/plain; charset=utf-8", b"not found\n"
 
 

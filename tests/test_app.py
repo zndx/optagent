@@ -84,6 +84,22 @@ def test_listen_port(monkeypatch) -> None:
     assert APP.app_port() == 8123
 
 
+def test_tiers_and_sessions_pages() -> None:
+    status, content_type, body = APP.response_for("GET", "/tiers")
+    page = body.decode("utf-8")
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert "span_tier0" in page
+    assert "kudu_scan" in page
+    assert "span_tier1" in page
+    assert "impala_sql" in page
+    status, _, body = APP.response_for("GET", "/sessions")
+    page = body.decode("utf-8")
+    assert status == 200
+    assert "weathership/oss-agentsview" in page
+    assert "go.kenn.io/agentsview" in page
+
+
 def test_health_and_unknown_routes() -> None:
     status, content_type, body = APP.response_for("GET", "/health")
     assert (status, content_type, body) == (200, "text/plain; charset=utf-8", b"ok\n")

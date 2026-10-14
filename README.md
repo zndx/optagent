@@ -26,6 +26,8 @@ Optagent launches as an Applied ML Prototype. The workbench installs `requiremen
 
 Kudu and Iceberg stay where they are. Postgres foreign tables reach them through Impala. Kudu scans and writes use `kudu_scan`. Iceberg tables and UNION views use `impala_sql`. The extension is [`weathership/impala_fdw`](https://github.com/weathership/impala_fdw), the same repository Gaius and Signals build. Product auth is Kerberos.
 
+The ledger relation is `optagent.span`. Hot hours are `span_tier0` on Kudu. Settled hours are `span_tier1` on Iceberg. The view masks a tier1 hour that is still in tier0. Session inspection starts from the local [agentsview](https://github.com/weathership/oss-agentsview) checkout at `../../rch/oss-agentsview`, wired as an editable replace in `go.work` and `ui/go.mod`.
+
 ```mermaid
 flowchart LR
   install["Install dependencies"] --> prepare["Prepare project"]
