@@ -1,0 +1,32 @@
+# Copyright 2026 zndx
+# SPDX-License-Identifier: Apache-2.0
+#
+# Custom AMP catalog source. In Site Administration > AMPs, add this
+# repository and set the catalog file name to catalog-entry.yaml.
+# https://docs.cloudera.com/machine-learning/cloud/manage-amp/topics/ml-amp-add-catalog.html
+
+name: Optagent
+
+entries:
+  - title: Optagent
+    label: optagent
+    short_description: |
+      AMP project template. Devenv locally, numbered jobs in CML.
+    long_description: |
+      Optagent is a project template for a Cloudera Machine Learning
+      Applied ML Prototype. Launching it installs Python dependencies,
+      writes a status snapshot, and serves that snapshot. Local
+      development uses devenv.
+    long_description_html: |
+      <p>Optagent is a project template for a Cloudera Machine Learning
+      Applied ML Prototype. Launching it installs Python dependencies,
+      writes a status snapshot, and serves that snapshot.</p>
+    tags:
+      - amp
+      - template
+      - cloudera-machine-learning
+      - devenv
+    git_url: "https://github.com/zndx/optagent"
+    git_ref: "main"
+    is_prototype: true
+    is_new: true

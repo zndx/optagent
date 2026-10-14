@@ -1,49 +1,49 @@
-# Cloudera Blueprint catalog metadata
-# Populate fields used by the master blueprint website and internal catalog.
+# Copyright 2026 zndx
+# SPDX-License-Identifier: Apache-2.0
+#
+# Catalog metadata for the Cloudera blueprint website.
+# Set reprise_link before publishing a walkthrough.
 
 # --- Identity ---
-name: "Build an Enterprise RAG Pipeline"
-slug: "enterprise-rag-pipeline"              # URL-safe repo / catalog identifier
-description: "Power fast, accurate semantic search across multimodal enterprise data."
-reprise_link: "https://[catalog-url]/[slug]"         # Public reprise link
+name: "Optagent"
+slug: "optagent"
+description: "AMP project template. Devenv runs it locally. Cloudera Machine Learning launches the numbered jobs and application."
+reprise_link: ""
 
 # --- Classification (website filters) ---
 catalog_classification:
-  - Enterprise Blueprint                     # Options: Enterprise Blueprint | Research | Launchable (AMP) | Developer Example
-launchable: true                             # true | false
-lifecycle_status: Active                     # e.g., Active | Deprecated
+  - Launchable (AMP)
+  - Developer Example
+launchable: true
+lifecycle_status: Active
 
 # --- Industry & alignment ---
-industry: General                            # e.g., General | Telecom | Financial Services | Healthcare & Life Sciences | Retail | Media | Physical AI & Robotics
-industry_alignment: "Horizontal"                     # Horizontal | Vertical
-target_vertical: ""                          # Optional finer-grained vertical
+industry: General
+industry_alignment: "Horizontal"
+target_vertical: ""
 
 # --- Tags (website search & browse) ---
 tags:
-  - rag
-  - retrieval-augmented-generation
-  - agents
+  - amp
+  - template
+  - cloudera-machine-learning
+  - devenv
 
 # --- Relationships ---
-product_mapping:                             # Cloudera products used
-  - Cloudera AI Inference Service            # e.g., Cloudera Machine Learning, Cloudera AI Inference Service, Cloudera Data in Motion, Cloudera Data Warehouse, etc.
+product_mapping:
   - Cloudera Machine Learning
-# model_dependencies:                          # Models, embeddings, or external AI services, if any. Comment out if none.
-#   - nemotron-3-super-120b-a12b
-#   - llama-nemotron-embed-1b-v2
 
 # --- Provenance ---
-publisher: cloudera                          # cloudera | partner-name
-source: Internal                             # Internal | Partner | NVIDIA Adaptation | Customer
+publisher: zndx
+source: Internal
 
 # --- Repository & assets ---
-public_github_link: "https://github.com/cloudera/[repo]"
-#private_github_link: ""                      # If applicable, original repo during development
+public_github_link: "https://github.com/zndx/optagent"
 
 # --- Ownership ---
-maintainer_name: "Jane Doe"
+maintainer_name: "zndx"
 
 # --- Dates ---
-date_created: "2025-01-24"
-date_updated: "2026-02-17"
-published_date: "2026-02-17"                 # Published date / last modified
+date_created: "2026-10-14"
+date_updated: "2026-10-14"
+published_date: ""

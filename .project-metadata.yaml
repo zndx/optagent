@@ -1,0 +1,85 @@
+# Copyright 2026 zndx
+# SPDX-License-Identifier: Apache-2.0
+#
+# Cloudera Machine Learning runbook. The install step is a job: PBJ
+# runtimes fail AMP setup steps that run as sessions. Jobs stay in the
+# project and can be run again from the Jobs tab.
+#
+# Local development does not use this file. Use devenv (devenv.nix).
+
+name: Optagent
+description: >
+  Project template for a Cloudera Machine Learning AMP. Devenv runs the
+  same prepare job and application locally. Launching the prototype
+  installs dependencies, writes a status snapshot, and serves it.
+author: zndx
+specification_version: "1.0"
+prototype_version: "0.1.0"
+date: "2026-10-14"
+
+environment_variables:
+  OPTAGENT_GREETING:
+    default: "Hello from the Optagent AMP template."
+    description: "Greeting the prepare job records and the application shows."
+    required: false
+  OPTAGENT_STATUS_PATH:
+    default: "assets/data/status.json"
+    description: "Project-relative path where the prepare job writes the status snapshot."
+    required: false
+
+runtimes:
+  - editor: PBJ Workbench
+    kernel: Python 3.12
+    edition: Standard
+  - editor: PBJ Workbench
+    kernel: Python 3.13
+    edition: Standard
+  - editor: JupyterLab
+    kernel: Python 3.12
+    edition: Standard
+
+tasks:
+  - type: create_job
+    name: Install Dependencies
+    entity_label: install_dependencies
+    script: 0_session-install-dependencies/install-dependencies.py
+    arguments: ""
+    kernel: python3
+    cpu: 1
+    memory: 2
+    short_summary: Create the job that installs requirements.txt.
+    environment_variables:
+      TASK_TYPE: CREATE/RUN_JOB
+
+  - type: run_job
+    entity_label: install_dependencies
+    short_summary: Install runtime dependencies from requirements.txt.
+
+  - type: create_job
+    name: Prepare project
+    entity_label: prepare_project
+    script: 1_job-prepare-project/job.py
+    arguments: ""
+    kernel: python3
+    cpu: 1
+    memory: 2
+    short_summary: Create the job that writes the status snapshot.
+    environment_variables:
+      TASK_TYPE: CREATE/RUN_JOB
+
+  - type: run_job
+    entity_label: prepare_project
+    short_summary: Write the status snapshot to OPTAGENT_STATUS_PATH.
+
+  - type: start_application
+    name: Optagent
+    subdomain: optagent
+    script: 2_app-serve/app.py
+    kernel: python3
+    cpu: 1
+    memory: 2
+    short_summary: Serve the status snapshot.
+    long_summary: >
+      Shows the greeting and the snapshot written by the prepare job.
+    environment_variables:
+      TASK_TYPE: START_APPLICATION

@@ -1,6 +1,9 @@
-# Cloudera Blueprint: [Blueprint Name]
+# Cloudera Blueprint: Optagent
 
-> Copy this template repo as the starting point for a new blueprint. Keep business and onboarding content here. Populate catalog and website fields in [`METADATA.yaml`](METADATA.yaml). At a minimum, the Blueprint should have these fields. Feel free to add additional ones as you see fit for your Blueprint. After reading this, the user should walk away with an understanding of how the Blueprint works, its purpose, and how to deploy it themself. Once the repo is complete, Cursor/AI can fill a lot of this in for you.
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.12%2B-3776AB)](https://www.python.org/downloads/)
+
+Project template for a Cloudera Machine Learning AMP. Copy it when a new prototype needs a catalog entry, a workbench runbook, and a local devenv shell that runs the same scripts.
 
 ## Table of Contents
 
@@ -9,93 +12,130 @@
 - [Use Case](#use-case)
 - [Key Features](#key-features)
 - [Quickstart](#quickstart)
-- [Architecture / Software Components](#architecture)
+- [Architecture](#architecture)
 - [Target Audience](#target-audience)
 - [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
 - [Hardware Requirements](#hardware-requirements)
 - [Documentation](#documentation)
+- [Copy this template](#copy-this-template)
 
 ## Overview
 
-[comment]: <> (Why: First impression for catalog visitors and GitHub readers. Answer "what is this and why Cloudera?" in one scannable paragraph. Audience: executives, architects, and developers browsing the catalog.)
+Optagent launches as an Applied ML Prototype. The workbench installs `requirements.txt`, writes a status snapshot, and serves that snapshot. On a workstation, devenv runs those same two scripts. The shell is Python 3.12 with uv. CML does not read `devenv.nix`.
 
-[One paragraph: what this blueprint does, who it is for, and the Cloudera platform value.]
+```mermaid
+flowchart LR
+  install["Install dependencies"] --> prepare["Prepare project"]
+  prepare --> snapshot["status.json"]
+  snapshot --> app["Application"]
+```
 
 ## Demo
 
-[comment]: <> (Why: Proof that the blueprint works end-to-end. A Reprise or recorded walkthrough lowers adoption friction for SEs and customers who won't clone the repo first. Audience: sales, SEs, and evaluators.)
+A Reprise walkthrough is not recorded yet. Leave `reprise_link` empty in [`METADATA.yaml`](METADATA.yaml) until one exists.
 
-[Link to reprise demo walking through blueprint solution]
+Locally, `devenv up` serves the page at <http://127.0.0.1:8123>. The page shows the greeting and the time the prepare job wrote the snapshot.
 
 ## Use Case
 
-[comment]: <> (Why: Connects technical components to a business problem. Helps catalog filters and internal reviewers assess industry fit and alignment. Audience: solution architects and customer stakeholders validating relevance.)
-
-[Problem statement and primary business outcome.]
+New prototypes need the same CML shape every time: a catalog entry, a `.project-metadata.yaml` runbook, numbered steps, and a local environment that can run those steps before anyone opens a workbench. This repository is that shape, with a small job and application so the launch path succeeds before the real workload replaces them.
 
 ## Key Features
 
-[comment]: <> (Why: Scannable differentiators for the catalog detail page and README skimmers. Keep these outcome-oriented, not implementation details. Audience: architects comparing blueprints and developers scanning for capabilities.)
+- A CML runbook that creates two jobs, runs them, and starts the application
+- Install, prepare, and serve scripts that find the project when CML leaves `__file__` unset
+- A devenv shell that syncs the project with uv and supervises the same prepare job and application
+- Catalog files for a custom AMP source and for the blueprint website
+- Tests that keep the runbook, the dependency lists, and the devenv shell aligned
 
-- [Feature 1]
-- [Feature 2]
-- [Feature 3]
+## Quickstart
 
-## Quickstart / Guide
+1. Clone this repository.
+2. Enter the devenv shell. With direnv, `direnv allow`. Otherwise run `devenv shell`.
+3. Run the tests and serve the page:
 
-[comment]: <> (Why: The minimum path from clone to working demo. Reduces time-to-first-success for developers and SEs running the blueprint in a lab. Link out to Reprise or docs if setup is long. Audience: hands-on implementers.)
+   ```bash
+   just test
+   devenv up
+   ```
 
-1. Clone the repository.
-2. Insert additional steps here or link to another page / Reprise with setup steps.
+   Then open <http://127.0.0.1:8123>. `just prepare` rewrites `assets/data/status.json`. `just app` serves the page without the process supervisor.
 
-## Architecture / Software Components
+4. To launch it from a CML AMP catalog, add this repository as a catalog source and set the catalog file to [`catalog-entry.yaml`](catalog-entry.yaml). Site Administration steps are in [Adding a catalog](https://docs.cloudera.com/machine-learning/cloud/manage-amp/topics/ml-amp-add-catalog.html).
 
-[comment]: <> (Why: Shows how Cloudera products and supporting services fit together. Helps platform teams validate dependencies and security review scope. Audience: architects, platform engineers, and technical reviewers.)
+   CML reads [`.project-metadata.yaml`](.project-metadata.yaml) and runs the tasks in order:
 
-Briefly describe the software components and sketch an architecture diagram of the components use. Illustration does not need to be incredibly complex but should illustrate the architecture of the project and its relevant components.
-Sample architecture sketch example: https://github.com/cloudera/CML_AMP_LLM_Chatbot_Augmented_with_Enterprise_Data/blob/main/images/rag-architecture.png
+   | Step | Type | What it does |
+   | --- | --- | --- |
+   | Install Dependencies | `create_job` + `run_job` | Installs `requirements.txt` into the workbench Python |
+   | Prepare project | `create_job` + `run_job` | Writes `assets/data/status.json` |
+   | Optagent | `start_application` | Serves the snapshot on `CDSW_APP_PORT` |
+
+   The jobs stay in the project. Run **Install Dependencies** again from the Jobs tab when `requirements.txt` changes.
+
+## Architecture
+
+The package in `src/optagent` holds the snapshot writer. The numbered folders are the CML steps, in order. Devenv starts the prepare job, then the application.
+
+Component detail is in [docs/architecture.md](docs/architecture.md).
 
 ## Target Audience
 
-[comment]: <> (Why: Sets expectations for skill level and role so readers self-select before investing in deployment. Also guides catalog positioning and demo narrative. Audience: blueprint authors and catalog curators; indirectly helps readers.)
-
-- [Persona 1 — e.g., ML engineer, data engineer, solution architect]
-- [Persona 2]
+- Developers packaging an internal prototype for Cloudera Machine Learning
+- Solution architects who need a catalog entry and a one-click launch path
+- Platform engineers checking that a new AMP uses the job runbook and a devenv shell
 
 ## Repository Structure
 
-[comment]: <> (Why: Orients new contributors and forked repos to where code, deploy configs, and metadata live. Keeps blueprint repos consistent across the catalog. Audience: developers extending the blueprint and reviewers auditing repo completeness.)
-
 | Path | Description |
 | --- | --- |
-| `assets/` | Diagrams, screenshots, sample media |
-| `deploy/` | Deployment configs (Docker Compose, Helm, scripts) |
-| `docs/` | Extended documentation |
+| `src/optagent/` | Snapshot writer shared by the job and the application |
+| `0_session-install-dependencies/` | CML job that installs `requirements.txt` |
+| `1_job-prepare-project/` | CML job that writes the status snapshot |
+| `2_app-serve/` | CML application that serves the snapshot |
+| `assets/data/` | Generated status snapshot |
+| `devenv.nix` | Local Python 3.12 environment, uv sync, and the two processes |
+| `requirements.txt` | Runtime dependencies installed by the CML job |
+| `docs/architecture.md` | Runbook, ports, and configuration |
 | `METADATA.yaml` | Catalog metadata for the Cloudera blueprint website |
-| etc... |
+| `catalog-entry.yaml` | CML AMP catalog entry |
+| `.project-metadata.yaml` | CML runtime and task runbook |
+| `tests/` | Runbook, devenv, snapshot, and page checks |
 
 ## Prerequisites
 
-[comment]: <> (Why: Surfaces blockers before someone starts deployment—entitlements, API keys, tooling. Reduces failed installs and support churn. Audience: developers and SEs preparing an environment.)
-
-Describe the software components and tools required to use the Blueprint.
-(e.g. Cloudera platform access / entitlement, API keys, Tools such as git, Docker, etc.)
+- [devenv](https://devenv.sh/) and [direnv](https://direnv.net/) for local runs
+- Python 3.12 is provided by the devenv shell
+- A Cloudera Machine Learning workspace with a PBJ Workbench runtime on Python 3.12 or 3.13, or JupyterLab on Python 3.12, Standard edition, when launching the AMP
+- No API keys. `OPTAGENT_GREETING` and `OPTAGENT_STATUS_PATH` have defaults
 
 ## Hardware Requirements
 
-[comment]: <> (Why: Sets realistic expectations for demo vs. production sizing. Helps SEs pick lab instances and customers plan capacity. Audience: platform engineers and infrastructure teams provisioning environments.)
-
 | Deployment | Minimum |
 | --- | --- |
-| [Launchable / demo] | [CPU, RAM, storage] |
-| [Production / enterprise] | [CPU, RAM, GPU, storage] |
+| Launchable / demo | 1 CPU, 2 GB RAM, no GPU |
+| Production / enterprise | Size the workload you add. The template jobs request 1 CPU and 2 GB |
 
 ## Documentation
 
-[comment]: <> (Why: Points to deeper material without bloating the README. Optional but valuable for complex blueprints. Audience: implementers who need runbooks, API refs, or video overviews beyond the quickstart.)
+- [Architecture](docs/architecture.md)
+- [AMP project specification](https://docs.cloudera.com/machine-learning/cloud/applied-ml-prototypes/topics/ml-amp-project-spec.html)
+- [Catalog file specification](https://docs.cloudera.com/machine-learning/cloud/manage-amp/topics/ml-amp-catalog-spec.html)
+- [Creating new AMPs](https://docs.cloudera.com/machine-learning/cloud/applied-ml-prototypes/topics/ml-amp-create-new-amp.html)
 
-Example documentation below. Incorporate what makes sense. Not a required field.
-- [Link to extended docs in `docs/`]
-- [Link to Cloudera product documentation]
-- [Youtube video overview of Blueprint]
+## Copy this template
+
+Keep the task order and the devenv shell. Replace the sample workload.
+
+| Change | Where |
+| --- | --- |
+| Prototype name, slug, maintainer | `METADATA.yaml`, `catalog-entry.yaml`, `.project-metadata.yaml` |
+| `git_url` and `git_ref` | `catalog-entry.yaml` |
+| Subdomain | `.project-metadata.yaml` `subdomain` |
+| Python package | `src/optagent/`, `pyproject.toml` `name` |
+| Runtime dependencies | `requirements.txt` and `[project].dependencies`, same names in both |
+| Prepare job | `1_job-prepare-project/job.py` and `processes.prepare` |
+| Application | `2_app-serve/app.py` and `processes.app` |
+
+The install task stays a job. Give each `create_job` a `kernel: python3` and `arguments: ""`. Point `languages.python.package` at `pkgs.python312`, and install local tools with `uv.sync`.
