@@ -41,7 +41,7 @@ flowchart LR
 
 A Reprise walkthrough is not recorded yet. Leave `reprise_link` empty in [`METADATA.yaml`](METADATA.yaml) until one exists.
 
-Locally, `devenv up` serves the page at <http://127.0.0.1:9892>, next to Signals on `:9889` and Gaius on `:9890`.
+Locally, `devenv up` serves the page at <http://tinybox.dev.vista.zndx.org:9892>, on all interfaces, next to Signals on `:9889` and Gaius on `:9890`.
 
 ## Use Case
 
@@ -66,7 +66,7 @@ New prototypes need the same CML shape every time: a catalog entry, a `.project-
    devenv up
    ```
 
-   Then open <http://127.0.0.1:9892>. With Postgres up, register the warehouse wrapper:
+   Then open <http://tinybox.dev.vista.zndx.org:9892>. With Postgres up, register the warehouse wrapper:
 
    ```bash
    just impala-fdw-install

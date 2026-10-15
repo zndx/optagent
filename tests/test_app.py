@@ -136,7 +136,12 @@ def test_listen_port(monkeypatch) -> None:
     assert APP.app_port() == 8123
     monkeypatch.delenv("PORT")
     monkeypatch.delenv("CDSW_APP_PORT")
+    monkeypatch.delenv("OPTAGENT_BIND", raising=False)
+    monkeypatch.delenv("CDSW_PROJECT_DIR", raising=False)
     assert APP.app_port() == 9892
+    assert APP.listen_host() == "0.0.0.0"
+    monkeypatch.setenv("CDSW_APP_PORT", "9000")
+    assert APP.listen_host() == "127.0.0.1"
 
 
 def test_tiers_and_sessions_pages() -> None:

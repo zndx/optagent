@@ -100,9 +100,10 @@ The session browser source is the local agentsview checkout `../../rch/oss-agent
 | `OPTAGENT_GREETING` | `Hello from the Optagent AMP template.` | Text the job records and the page shows before a snapshot exists |
 | `OPTAGENT_STATUS_PATH` | `assets/data/status.json` | Snapshot path. Relative paths are inside the repository |
 | `PORT` | `9892` when unset | Listen port. The devenv process sets `9892` |
-| `OPTAGENT_PRIMARY_UI` | `http://127.0.0.1:9892` | Lattice URL for this UI. Signals is `:9889`. Gaius is `:9890` |
+| `OPTAGENT_BIND` | `0.0.0.0` on the workstation, `127.0.0.1` in CML | Listen address. `0.0.0.0` is what Signals and Gaius use so the hostname works |
+| `OPTAGENT_PRIMARY_UI` | `http://tinybox.dev.vista.zndx.org:9892` | Lattice URL for this UI. Signals is `:9889`. Gaius is `:9890` |
 
-`devenv up` binds the UI at `http://127.0.0.1:9892` and the lattice engine at `:50851`. `optagent.service` is a `signals.target` member: `PartOf=` and `WantedBy=signals.target`, `After=signals-ready.service`. Start and stop run `scripts/systemd_start.sh` and `scripts/systemd_stop.sh`, which only touch this checkout. Postgres is `:5599`, the next free slot after Semantica `:5588`. It does not bind Signals `:5455` or RustFS `:9010`.
+`devenv up` binds the UI on `0.0.0.0:9892`, so <http://tinybox.dev.vista.zndx.org:9892> answers, and the lattice engine at `:50851`. `optagent.service` is a `signals.target` member: `PartOf=` and `WantedBy=signals.target`, `After=signals-ready.service`. Start and stop run `scripts/systemd_start.sh` and `scripts/systemd_stop.sh`, which only touch this checkout. Postgres is `:5599`, the next free slot after Semantica `:5588`. It does not bind Signals `:5455` or RustFS `:9010`.
 
 `Engine/Status` reports `project=optagent`, no hosted model, and a primary surface at `:9892` whose `healthy` flag follows whether that port accepts a connection. Server reflection is enabled. Signals lists the UI in the waffle after this engine is in some seed's `PEERS` (the contract entry is `engine_grpc_lattice.optagent = 50851`). The amp posture still queries Signals Impala rather than this postmaster.
 | `CDSW_APP_PORT` | | Listen port inside CML, used when `PORT` is unset |

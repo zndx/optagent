@@ -95,7 +95,8 @@ def test_devenv_is_the_local_runtime() -> None:
     assert 'restart.on = "never"' in nix
     assert "processes.app" in nix
     assert 'env.PORT = "9892"' in nix
-    assert 'OPTAGENT_PRIMARY_UI = "http://127.0.0.1:9892"' in nix
+    assert 'OPTAGENT_BIND = "0.0.0.0"' in nix
+    assert 'OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892"' in nix
     assert "devenv:processes:prepare@completed" in nix
     assert "ready.http.get" in nix
     assert 'path = "/health"' in nix

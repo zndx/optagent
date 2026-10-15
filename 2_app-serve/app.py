@@ -51,6 +51,17 @@ def app_port() -> int:
     return int(os.environ.get("PORT") or os.environ.get("CDSW_APP_PORT") or "9892")
 
 
+def listen_host() -> str:
+    """LAN bind on the workstation. CML stays on loopback for its proxy."""
+
+    explicit = os.environ.get("OPTAGENT_BIND")
+    if explicit:
+        return explicit
+    if os.environ.get("CDSW_APP_PORT") or os.environ.get("CDSW_PROJECT_DIR"):
+        return "127.0.0.1"
+    return "0.0.0.0"
+
+
 def _chrome_controls(settings_active: bool = False) -> str:
     """Waffle, mode, and settings. Glyphs match Ægir: 9-dot, Phosphor sun/moon, Ant gear."""
 
@@ -590,12 +601,13 @@ def make_handler() -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
-def serve(host: str = "127.0.0.1") -> None:
+def serve(host: str | None = None) -> None:
     class Server(ThreadingHTTPServer):
         allow_reuse_address = True
 
-    server = Server((host, app_port()), make_handler())
-    print(f"serving on http://{host}:{server.server_port}", flush=True)
+    bind = host or listen_host()
+    server = Server((bind, app_port()), make_handler())
+    print(f"serving on http://{bind}:{server.server_port}", flush=True)
     server.serve_forever()
 
 

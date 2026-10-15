@@ -67,7 +67,7 @@
     exec = "python -m optagent.engine";
     env.OPTAGENT_ENGINE_PORT = "50851";
     env.OPTAGENT_UI_PORT = "9892";
-    env.OPTAGENT_PRIMARY_UI = "http://127.0.0.1:9892";
+    env.OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892";
     ready.exec.command = "python -m optagent.engine_ready";
     ready.period = 2;
     ready.probe_timeout = 3;
@@ -86,7 +86,8 @@
   processes.app = {
     exec = "python ${config.devenv.root}/2_app-serve/app.py";
     env.PORT = "9892";
-    env.OPTAGENT_PRIMARY_UI = "http://127.0.0.1:9892";
+    env.OPTAGENT_BIND = "0.0.0.0";
+    env.OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892";
     after = [ "devenv:processes:prepare@completed" ];
     ready.http.get = {
       host = "127.0.0.1";
@@ -100,7 +101,7 @@
   };
 
   enterShell = ''
-    echo "optagent: $(python --version) — just test, devenv up (http://127.0.0.1:9892)"
+    echo "optagent: $(python --version) — just test, devenv up (http://tinybox.dev.vista.zndx.org:9892)"
   '';
 
   # devenv 2 runs this task during `devenv test`. The enterTest string
