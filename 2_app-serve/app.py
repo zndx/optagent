@@ -530,10 +530,18 @@ def render_sessions() -> str:
 def _page(route: str, sample) -> tuple[int, str, bytes]:
     if route == "/health":
         return 200, "text/plain; charset=utf-8", b"ok\n"
+    ui = _ui_file(route)
+    if ui is not None:
+        kind = "text/html; charset=utf-8" if ui.suffix == ".html" else _mime(ui.suffix)
+        return 200, kind, ui.read_bytes()
     if route in ("/", "/index.html"):
         return 200, "text/html; charset=utf-8", render_agentsview("/", sample).encode("utf-8")
     if route == "/ledger":
         page = render_page(read_status(status_path(ROOT)), greeting_from_env())
+        if sample is not None:
+            names = ", ".join(html.escape(project) for project in sample.projects)
+            note = f"<p>Sample workspace: {names}. Impala is not contacted.</p>"
+            page = page.replace("</main>", note + "</main>", 1)
         return 200, "text/html; charset=utf-8", page.encode("utf-8")
     agents_paths = {href for href, _label in _AGENTS_TABS}
     if route in agents_paths:
@@ -542,13 +550,8 @@ def _page(route: str, sample) -> tuple[int, str, bytes]:
         return 200, "text/html; charset=utf-8", render_tiers().encode("utf-8")
     if route == "/sessions":
         return 200, "text/html; charset=utf-8", render_sessions().encode("utf-8")
-    if route == "/settings" or route.startswith("/settings/"):
-        ui = _ui_file(route)
-        if ui is not None:
-            kind = "text/html; charset=utf-8" if ui.suffix == ".html" else _mime(ui.suffix)
-            return 200, kind, ui.read_bytes()
-        if route == "/settings":
-            return 200, "text/html; charset=utf-8", render_agentsview("/settings", sample).encode("utf-8")
+    if route == "/settings":
+        return 200, "text/html; charset=utf-8", render_agentsview("/settings", sample).encode("utf-8")
     return 404, "text/plain; charset=utf-8", b"not found\n"
 
 
@@ -580,10 +583,10 @@ def _settings_payload(enabled: bool) -> bytes:
 def _ui_file(route: str) -> Path | None:
     if not _UI_DIST.is_dir():
         return None
-    if route in {"/settings", "/settings/"}:
+    if route in {"/", "/index.html", "/settings", "/settings/"}:
         candidate = _UI_DIST / "index.html"
-    elif route.startswith("/settings/"):
-        candidate = (_UI_DIST / route.removeprefix("/settings/")).resolve()
+    elif route.startswith("/assets/"):
+        candidate = (_UI_DIST / route.lstrip("/")).resolve()
         if not str(candidate).startswith(str(_UI_DIST.resolve())):
             return None
     else:

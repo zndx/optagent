@@ -73,28 +73,16 @@ def test_page_shows_the_snapshot(tmp_path: Path, monkeypatch) -> None:
     assert "Snapshot written at" in page
 
 
-def test_home_is_the_empty_agentsview() -> None:
+def test_home_is_the_kumo_settings_app() -> None:
     status, content_type, body, _extra = APP.response_for("GET", "/")
     page = body.decode("utf-8")
     assert status == 200
     assert content_type.startswith("text/html")
-    assert "agentsview" in page
-    assert "No sessions" in page
-    assert "No data for this period" in page
-    assert "Search sessions and messages..." in page
-    assert ">Sessions<" in page
-    assert ">0<" in page
-    assert 'id="mode-toggle"' in page
-    assert 'id="waffle-toggle"' in page
-    assert 'aria-label="Settings"' in page
-    assert "No peers advertising a primary UI." in page
-    assert 'data-theme="keiretsu"' in page
-    assert "cldr-color-mode" in page
-    assert 'aria-label="Switch to light"' in page
-    assert "M788.3 465.9" in page
-    status, _, usage, _extra = APP.response_for("GET", "/usage")
+    assert 'id="root"' in page
+    assert "/assets/index-" in page
+    status, _, asset, _extra = APP.response_for("GET", "/settings")
     assert status == 200
-    assert "No data for this period" in usage.decode("utf-8")
+    assert 'id="root"' in asset.decode("utf-8")
 
 
 def test_settings_shows_the_trace_archive(monkeypatch) -> None:
@@ -108,13 +96,15 @@ def test_settings_shows_the_trace_archive(monkeypatch) -> None:
 
 def test_sample_mode_lists_the_workspace_and_sets_a_cookie() -> None:
     status, _, body, extra = APP.response_for("GET", "/?sample=on")
-    page = body.decode("utf-8")
     assert status == 200
+    assert 'id="root"' in body.decode("utf-8")
+    assert any(key == "Set-Cookie" and "optagent-sample-mode=on" in value for key, value in extra)
+    status, _, ledger, _extra = APP.response_for("GET", "/ledger?sample=on")
+    page = ledger.decode("utf-8")
     assert "Sample workspace" in page
     assert "gaius" in page
     assert "semantica" in page
     assert "Impala is not contacted" in page
-    assert any(key == "Set-Cookie" and "optagent-sample-mode=on" in value for key, value in extra)
     status, _, settings, _extra = APP.response_for(
         "GET",
         "/api/optagent/v1/settings",
