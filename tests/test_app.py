@@ -84,6 +84,13 @@ def test_home_is_the_empty_agentsview() -> None:
     assert "Search sessions and messages..." in page
     assert ">Sessions<" in page
     assert ">0<" in page
+    assert 'id="mode-toggle"' in page
+    assert 'id="waffle-toggle"' in page
+    assert 'aria-label="Settings"' in page
+    assert "No peers advertising a primary UI." in page
+    assert 'data-theme="keiretsu"' in page
+    assert "cldr-color-mode" in page
+    assert 'aria-label="Switch to light"' in page
     status, _, usage = APP.response_for("GET", "/usage")
     assert status == 200
     assert "No data for this period" in usage.decode("utf-8")

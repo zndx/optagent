@@ -50,6 +50,150 @@ def app_port() -> int:
     return int(os.environ.get("PORT") or os.environ.get("CDSW_APP_PORT") or "8123")
 
 
+def _chrome_controls(settings_active: bool = False) -> str:
+    """Waffle, mode, and settings. Glyphs match Ægir: 9-dot, Phosphor sun/moon, Ant gear."""
+
+    gear = " active" if settings_active else ""
+    return """
+    <div class="chrome-tools">
+      <button type="button" id="waffle-toggle" class="chrome-icon" aria-label="Federated apps" aria-pressed="false" title="Federated primary UIs">
+        <svg class="icon-waffle" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+          <circle cx="5" cy="5" r="1.7" fill="currentColor"/>
+          <circle cx="12" cy="5" r="1.7" fill="currentColor"/>
+          <circle cx="19" cy="5" r="1.7" fill="currentColor"/>
+          <circle cx="5" cy="12" r="1.7" fill="currentColor"/>
+          <circle cx="12" cy="12" r="1.7" fill="currentColor"/>
+          <circle cx="19" cy="12" r="1.7" fill="currentColor"/>
+          <circle cx="5" cy="19" r="1.7" fill="currentColor"/>
+          <circle cx="12" cy="19" r="1.7" fill="currentColor"/>
+          <circle cx="19" cy="19" r="1.7" fill="currentColor"/>
+        </svg>
+      </button>
+      <button type="button" id="mode-toggle" class="chrome-icon" aria-label="Switch to light" title="Switch to light">
+        <svg class="icon-sun" viewBox="0 0 256 256" width="16" height="16" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M116,36V20a12,12,0,0,1,24,0V36a12,12,0,0,1-24,0Zm80,92a68,68,0,1,1-68-68A68.07,68.07,0,0,1,196,128Zm-24,0a44,44,0,1,0-44,44A44.05,44.05,0,0,0,172,128ZM51.51,68.49a12,12,0,1,0,17-17l-12-12a12,12,0,0,0-17,17Zm0,119-12,12a12,12,0,0,0,17,17l12-12a12,12,0,1,0-17-17ZM196,72a12,12,0,0,0,8.49-3.51l12-12a12,12,0,0,0-17-17l-12,12A12,12,0,0,0,196,72Zm8.49,115.51a12,12,0,0,0-17,17l12,12a12,12,0,0,0,17-17ZM48,128a12,12,0,0,0-12-12H20a12,12,0,0,0,0,24H36A12,12,0,0,0,48,128Zm80,80a12,12,0,0,0-12,12v16a12,12,0,0,0,24,0V220A12,12,0,0,0,128,208Zm108-92H220a12,12,0,0,0,0,24h16a12,12,0,0,0,0-24Z"/>
+        </svg>
+        <svg class="icon-moon" viewBox="0 0 256 256" width="16" height="16" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M236.37,139.4a12,12,0,0,0-12-3A84.07,84.07,0,0,1,119.6,31.59a12,12,0,0,0-15-15A108.86,108.86,0,0,0,49.69,55.07,108,108,0,0,0,136,228a107.09,107.09,0,0,0,64.93-21.69,108.86,108.86,0,0,0,38.44-54.94A12,12,0,0,0,236.37,139.4Zm-49.88,47.74A84,84,0,0,1,68.86,69.51,84.93,84.93,0,0,1,92.27,48.29Q92,52.13,92,56A108.12,108.12,0,0,0,200,164q3.87,0,7.71-.27A84.79,84.79,0,0,1,186.49,187.14Z"/>
+        </svg>
+      </button>
+      <a href="/settings" class="chrome-icon""" + gear + """" aria-label="Settings" title="Settings — deployment configuration">
+        <svg class="icon-gear" viewBox="64 64 896 896" width="18" height="18" aria-hidden="true" focusable="false">
+          <path fill="currentColor" d="M924.8 625.7l-65.5-35.9c3.1-19 4.7-38.4 4.7-57.8s-1.6-38.8-4.7-57.8l65.5-35.9c10.1-5.5 14.2-18.1 9.4-28.7-13.1-28.7-29.6-55.6-49.4-79.6-7.3-8.8-20.3-11.2-30.3-5.7l-65.5 35.9c-29.8-25.2-64.3-43.5-101.5-54.1V160c0-11.7-8.1-21.9-19.6-24.3-33.4-7.2-67.9-7.2-101.3 0-11.5 2.5-19.6 12.6-19.6 24.3v71.9c-37.2 10.6-71.7 28.9-101.5 54.1l-65.5-35.9c-10-5.5-23-3.1-30.3 5.7-19.8 24-36.3 50.9-49.4 79.6-4.8 10.6-.7 23.2 9.4 28.7l65.5 35.9c-3.1 19-4.7 38.4-4.7 57.8s1.6 38.8 4.7 57.8l-65.5 35.9c-10.1 5.5-14.2 18.1-9.4 28.7 13.1 28.7 29.6 55.6 49.4 79.6 7.3 8.8 20.3 11.2 30.3 5.7l65.5-35.9c29.8 25.2 64.3 43.5 101.5 54.1V864c0 11.7 8.1 21.9 19.6 24.3 33.4 7.2 67.9 7.2 101.3 0 11.5-2.5 19.6-12.6 19.6-24.3v-71.9c37.2-10.6 71.7-28.9 101.5-54.1l65.5 35.9c10 5.5 23 3.1 30.3-5.7 19.8-24 36.3-50.9 49.4-79.6 4.8-10.6.7-23.2-9.4-28.7zM512 624c-61.9 0-112-50.1-112-112s50.1-112 112-112 112 50.1 112 112-50.1 112-112 112z"/>
+        </svg>
+      </a>
+    </div>
+    <aside id="waffle-rail" class="waffle-rail" hidden>
+      <div class="waffle-rail-head"><span>Federation</span>
+        <button type="button" id="waffle-close" class="chrome-icon" aria-label="Close">×</button>
+      </div>
+      <p class="waffle-empty">No peers advertising a primary UI.</p>
+    </aside>
+    """
+
+
+def _chrome_css() -> str:
+    return """
+    html[data-theme="keiretsu"][data-mode="dark"],
+    html[data-theme="keiretsu"]:not([data-mode="light"]) {
+      color-scheme: dark;
+      --color-kumo-canvas: #090b0e;
+      --color-kumo-base: #101418;
+      --color-kumo-elevated: #191d22;
+      --color-kumo-line: #30363c;
+      --color-kumo-fill: #30363c;
+      --text-color-kumo-default: #d4d8dd;
+      --text-color-kumo-strong: #e5e8ec;
+      --text-color-kumo-subtle: #9fa5ac;
+      --text-color-kumo-link: #96a2fc;
+    }
+    html[data-theme="keiretsu"][data-mode="light"] {
+      color-scheme: light;
+      --color-kumo-canvas: #eef1f4;
+      --color-kumo-base: #f8f9fb;
+      --color-kumo-elevated: #ffffff;
+      --color-kumo-line: #d3d9df;
+      --color-kumo-fill: #e4e8ed;
+      --text-color-kumo-default: #25292f;
+      --text-color-kumo-strong: #15191d;
+      --text-color-kumo-subtle: #5d646b;
+      --text-color-kumo-link: #4338ca;
+    }
+    .chrome-tools { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+    .chrome-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 30px; height: 30px; border-radius: 6px; cursor: pointer;
+      background: transparent; border: 1px solid var(--color-kumo-line);
+      color: var(--text-color-kumo-subtle); text-decoration: none;
+    }
+    .chrome-icon:hover, .chrome-icon.active { color: var(--text-color-kumo-strong); background: var(--color-kumo-fill); }
+    .icon-sun, .icon-moon { display: none; }
+    html[data-mode="dark"] .icon-sun, html:not([data-mode="light"]) .icon-sun { display: block; }
+    html[data-mode="light"] .icon-moon { display: block; }
+    .waffle-rail {
+      position: fixed; top: 56px; right: 0; z-index: 45; width: min(280px, 92vw);
+      background: var(--color-kumo-base); color: var(--text-color-kumo-default);
+      border-left: 1px solid var(--color-kumo-line); box-shadow: -8px 0 24px rgba(0,0,0,.25);
+    }
+    .waffle-rail[hidden] { display: none; }
+    .waffle-rail-head {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0.6rem 0.75rem; font-size: 0.78rem; letter-spacing: 0.06em;
+      text-transform: uppercase; color: var(--text-color-kumo-subtle);
+      border-bottom: 1px solid var(--color-kumo-line);
+    }
+    .waffle-empty { padding: 0.85rem; font-size: 0.82rem; color: var(--text-color-kumo-subtle); }
+    """
+
+
+def _chrome_script() -> str:
+    return """
+    <script>
+    (function () {
+      var root = document.documentElement;
+      var btn = document.getElementById('mode-toggle');
+      function paint(mode) {
+        if (!btn) return;
+        var toLight = mode !== 'light';
+        var next = toLight ? 'Switch to light' : 'Switch to dark';
+        btn.title = next;
+        btn.setAttribute('aria-label', next);
+      }
+      function apply(mode) {
+        root.setAttribute('data-mode', mode);
+        try { localStorage.setItem('cldr-color-mode', mode); } catch (e) {}
+        paint(mode);
+      }
+      var saved = null;
+      try { saved = localStorage.getItem('cldr-color-mode'); } catch (e) {}
+      if (saved === 'light' || saved === 'dark') apply(saved);
+      else paint(root.getAttribute('data-mode') || 'dark');
+      if (btn) btn.addEventListener('click', function () {
+        apply(root.getAttribute('data-mode') === 'light' ? 'dark' : 'light');
+      });
+      var waffle = document.getElementById('waffle-toggle');
+      var rail = document.getElementById('waffle-rail');
+      var close = document.getElementById('waffle-close');
+      function shut() {
+        if (!rail || !waffle) return;
+        rail.setAttribute('hidden', '');
+        waffle.setAttribute('aria-pressed', 'false');
+        waffle.classList.remove('active');
+      }
+      if (waffle && rail) waffle.addEventListener('click', function () {
+        var opening = rail.hasAttribute('hidden');
+        if (opening) {
+          rail.removeAttribute('hidden');
+          waffle.setAttribute('aria-pressed', 'true');
+          waffle.classList.add('active');
+        } else shut();
+      });
+      if (close) close.addEventListener('click', shut);
+    })();
+    </script>
+    """
+
+
 _AGENTS_TABS = (
     ("/", "Sessions"),
     ("/usage", "Usage"),
@@ -90,50 +234,52 @@ def render_agentsview(active: str) -> str:
         <p class="empty">No data for this period</p>
         """
     else:
-        title = dict(_AGENTS_TABS).get(active, "Sessions")
+        title = dict(_AGENTS_TABS).get(active, "Settings")
         main = f"""
         <h1>{html.escape(title)}</h1>
         <p class="empty">No data for this period</p>
         """
+    gear_on = active == "/settings"
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="keiretsu" data-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>agentsview</title>
   <style>
     * {{ box-sizing: border-box; }}
-    html, body {{ margin: 0; height: 100%; background: #f4f5f7; color: #1c2430;
+    {_chrome_css()}
+    html, body {{ margin: 0; height: 100%; background: var(--color-kumo-canvas); color: var(--text-color-kumo-default);
       font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
     body {{ display: flex; flex-direction: column; min-height: 100%; }}
     .top {{ display: flex; align-items: center; gap: 12px; min-height: 52px;
-      padding: 0 12px; background: #fff; border-bottom: 1px solid #e3e6eb; }}
-    .brand {{ font-weight: 650; letter-spacing: -0.02em; color: #111827; text-decoration: none; }}
+      padding: 0 12px; background: var(--color-kumo-base); border-bottom: 1px solid var(--color-kumo-line); }}
+    .brand {{ font-weight: 650; letter-spacing: -0.02em; color: var(--text-color-kumo-strong); text-decoration: none; }}
     .tabs {{ display: flex; gap: 4px; overflow-x: auto; }}
-    .tab {{ color: #4b5563; text-decoration: none; padding: 6px 8px; border-radius: 6px;
+    .tab {{ color: var(--text-color-kumo-subtle); text-decoration: none; padding: 6px 8px; border-radius: 6px;
       white-space: nowrap; font-size: 14px; }}
-    .tab.active {{ background: #eef2ff; color: #1d4ed8; }}
-    .search {{ margin-left: auto; border: 1px solid #e3e6eb; border-radius: 6px;
-      padding: 6px 8px; min-width: 12rem; color: #6b7280; background: #fafafa; font-size: 13px; }}
+    .tab.active {{ background: var(--color-kumo-fill); color: var(--text-color-kumo-strong); }}
+    .search {{ border: 1px solid var(--color-kumo-line); border-radius: 6px;
+      padding: 6px 8px; min-width: 12rem; color: var(--text-color-kumo-subtle); background: var(--color-kumo-canvas); font-size: 13px; }}
     .frame {{ display: flex; flex: 1; min-height: 0; }}
-    .sidebar {{ width: 280px; background: #fff; border-right: 1px solid #e3e6eb; padding: 12px; }}
-    .sidebar h2 {{ font-size: 13px; margin: 0 0 8px; color: #6b7280; font-weight: 600; }}
-    .side-empty {{ color: #6b7280; font-size: 14px; padding: 12px 0; }}
+    .sidebar {{ width: 280px; background: var(--color-kumo-base); border-right: 1px solid var(--color-kumo-line); padding: 12px; }}
+    .sidebar h2 {{ font-size: 13px; margin: 0 0 8px; color: var(--text-color-kumo-subtle); font-weight: 600; }}
+    .side-empty {{ color: var(--text-color-kumo-subtle); font-size: 14px; padding: 12px 0; }}
     main {{ flex: 1; padding: 20px; overflow: auto; }}
-    main h1 {{ font-size: 20px; font-weight: 650; margin: 0 0 16px; }}
+    main h1 {{ font-size: 20px; font-weight: 650; margin: 0 0 16px; color: var(--text-color-kumo-strong); }}
     .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }}
-    .metric {{ background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; padding: 12px; }}
-    .metric p {{ margin: 0; color: #6b7280; font-size: 12px; }}
+    .metric {{ background: var(--color-kumo-elevated); border: 1px solid var(--color-kumo-line); border-radius: 8px; padding: 12px; }}
+    .metric p {{ margin: 0; color: var(--text-color-kumo-subtle); font-size: 12px; }}
     .metric strong {{ display: block; margin-top: 6px; font-size: 22px; font-weight: 650; }}
-    .empty {{ margin-top: 20px; color: #6b7280; }}
+    .empty {{ margin-top: 20px; color: var(--text-color-kumo-subtle); }}
     .status {{ height: 28px; display: flex; align-items: center; gap: 12px;
-      padding: 0 12px; background: #fff; border-top: 1px solid #e3e6eb;
-      color: #6b7280; font-size: 12px; }}
-    .status a {{ color: #1d4ed8; }}
+      padding: 0 12px; background: var(--color-kumo-base); border-top: 1px solid var(--color-kumo-line);
+      color: var(--text-color-kumo-subtle); font-size: 12px; }}
+    .status a {{ color: var(--text-color-kumo-link); }}
     @media (max-width: 720px) {{
       .search {{ display: none; }}
       .frame {{ flex-direction: column; }}
-      .sidebar {{ width: auto; border-right: 0; border-bottom: 1px solid #e3e6eb; }}
+      .sidebar {{ width: auto; border-right: 0; border-bottom: 1px solid var(--color-kumo-line); }}
     }}
   </style>
 </head>
@@ -142,6 +288,7 @@ def render_agentsview(active: str) -> str:
     <a class="brand" href="/">agentsview</a>
     <nav class="tabs">{tabs}</nav>
     <div class="search" role="search">Search sessions and messages...</div>
+    {_chrome_controls(gear_on)}
   </header>
   <div class="frame">
     <aside class="sidebar">
@@ -154,6 +301,7 @@ def render_agentsview(active: str) -> str:
     <span>No sessions</span>
     <a href="/ledger">Ledger</a>
   </footer>
+  {_chrome_script()}
 </body>
 </html>
 """
@@ -165,42 +313,46 @@ def _shell(active: str, body: str) -> str:
         return f'<a class="nav-link{cls}" href="{href}">{label}</a>'
 
     return f"""<!DOCTYPE html>
-<html lang="en" data-mode="dark">
+<html lang="en" data-theme="keiretsu" data-mode="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Optagent</title>
   <style>
     * {{ box-sizing: border-box; }}
-    html, body {{ margin: 0; min-height: 100%; background: #f4f6f8; color: #1c2430;
+    {_chrome_css()}
+    html, body {{ margin: 0; min-height: 100%; background: var(--color-kumo-canvas); color: var(--text-color-kumo-default);
       font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
-    .chrome {{ display: flex; align-items: center; gap: 16px; height: 56px;
-      padding: 0 20px; background: #101418; color: #e5e8ec; border-bottom: 1px solid #30363c; }}
-    .chrome a {{ color: #9fa5ac; text-decoration: none; }}
-    .chrome a:hover, .chrome a.active {{ color: #e5e8ec; }}
-    .brand {{ color: #e5e8ec; font-weight: 600; font-size: 18px; letter-spacing: 0.04em; }}
+    .chrome {{ display: flex; align-items: center; gap: 16px; min-height: 56px;
+      padding: 0 20px; background: var(--color-kumo-base); color: var(--text-color-kumo-default);
+      border-bottom: 1px solid var(--color-kumo-line); }}
+    .chrome a.nav-link, .chrome a.brand {{ color: var(--text-color-kumo-subtle); text-decoration: none; }}
+    .chrome a.nav-link:hover, .chrome a.nav-link.active, .chrome a.brand {{ color: var(--text-color-kumo-strong); }}
+    .brand {{ font-weight: 600; font-size: 18px; letter-spacing: 0.04em; }}
     .nav {{ display: flex; gap: 16px; }}
     main {{ max-width: 52rem; margin: 0 auto; padding: 1.5rem 1.25rem 3rem; }}
-    .card {{ background: white; border: 1px solid #d5dde6; border-radius: 8px;
+    .card {{ background: var(--color-kumo-elevated); border: 1px solid var(--color-kumo-line); border-radius: 8px;
       padding: 1rem 1.25rem; margin-top: 1rem; }}
     table {{ width: 100%; border-collapse: collapse; }}
-    th, td {{ text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid #e3e8ee; }}
+    th, td {{ text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--color-kumo-line); }}
     code {{ font-size: 0.92em; }}
-    a {{ color: #0b6b4a; }}
+    main a {{ color: var(--text-color-kumo-link); }}
   </style>
 </head>
 <body>
   <header class="chrome">
     <a class="brand" href="/">Optagent</a>
     <nav class="nav">
-      {link("/", "Ledger")}
+      {link("/ledger", "Ledger")}
       {link("/tiers", "Tiers")}
       {link("/sessions", "Sessions")}
     </nav>
+    {_chrome_controls()}
   </header>
   <main>
     {body}
   </main>
+  {_chrome_script()}
 </body>
 </html>
 """
@@ -319,6 +471,8 @@ def response_for(method: str, path: str) -> tuple[int, str, bytes]:
         return 200, "text/html; charset=utf-8", render_tiers().encode("utf-8")
     if route == "/sessions":
         return 200, "text/html; charset=utf-8", render_sessions().encode("utf-8")
+    if route == "/settings":
+        return 200, "text/html; charset=utf-8", render_agentsview("/settings").encode("utf-8")
     return 404, "text/plain; charset=utf-8", b"not found\n"
 
 
