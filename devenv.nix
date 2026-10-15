@@ -18,7 +18,8 @@
   # Thrift and Boost stay out of `packages`. The FDW task pins Nix
   # thrift so the .so does not link the Impala toolchain's 0.16.
   # Varnish lattice: gaius 6091, signals 6092, aegir 6093, atelier 6094.
-  # Only the snapshot origin is cached. The browser still talks to :9892.
+  # Cached origins: snapshot, summary lineup, Phoenix sessions frame.
+  # The browser still talks to :9892. Origin handlers must not call Varnish.
   services.varnish = {
     enable = true;
     listen = "127.0.0.1:6095";
@@ -33,14 +34,17 @@
       }
 
       sub vcl_recv {
-        if (req.url ~ "^/api/optagent/v1/snapshot_origin") {
+        if (req.url ~ "^/api/optagent/v1/(snapshot_origin|summary_origin|sessions_origin)") {
           return (hash);
         }
         return (pass);
       }
 
       sub vcl_backend_response {
-        if (bereq.url ~ "^/api/optagent/v1/snapshot_origin") {
+        if (bereq.url ~ "^/api/optagent/v1/(snapshot_origin|summary_origin|sessions_origin)") {
+          # The app stamps a session cookie on every response. Leaving it
+          # on the object makes the builtin VCL refuse to store it.
+          unset beresp.http.Set-Cookie;
           if (beresp.status >= 400) {
             if (bereq.is_bgfetch) {
               return (abandon);
@@ -48,10 +52,12 @@
             set beresp.ttl = 1s;
             set beresp.grace = 0s;
             set beresp.uncacheable = true;
-          } else {
-            set beresp.ttl = 60s;
-            set beresp.grace = 6h;
+            return (deliver);
           }
+          set beresp.ttl = 60s;
+          set beresp.grace = 6h;
+          set beresp.uncacheable = false;
+          return (deliver);
         }
       }
     '';

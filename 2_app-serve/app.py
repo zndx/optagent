@@ -584,7 +584,7 @@ def _settings_payload(enabled: bool) -> bytes:
 def _ui_file(route: str) -> Path | None:
     if not _UI_DIST.is_dir():
         return None
-    if route in {"/", "/index.html", "/settings", "/settings/"}:
+    if route in {"/", "/index.html", "/sessions", "/summary", "/terminal", "/settings", "/settings/"}:
         candidate = _UI_DIST / "index.html"
     elif route.startswith("/assets/") or route.startswith("/brand/"):
         candidate = (_UI_DIST / route.lstrip("/")).resolve()
@@ -624,17 +624,83 @@ def _origin_snapshot(runtime) -> dict:
     }
 
 
-def _cached_snapshot(runtime) -> dict:
-    """Ask Varnish for the snapshot document. Fall back to the origin."""
+def _summary_origin(runtime) -> dict:
+    """Gaius-style lineup of rich-text panels. Members stay pointers."""
+
+    snapshot = _origin_snapshot(runtime)
+    panels = []
+    projects: list[str] = []
+    kinds: list[str] = []
+    for member in snapshot["members"]:
+        project = str(member["project"])
+        kind = str(member["kind"])
+        if project not in projects:
+            projects.append(project)
+        if kind not in kinds:
+            kinds.append(kind)
+        panels.append(
+            {
+                "id": f"{project}/{kind}/{member['name']}",
+                "title": member["name"],
+                "project": project,
+                "kind": kind,
+                "body": (
+                    f"{project} keeps this {kind} member in place.\n\n"
+                    f"metadata-location: {member['metadata-location']}\n\n"
+                    "This panel is the pointer. Table and file bytes stay in the warehouse."
+                ),
+            }
+        )
+    return {
+        "format": "optagent-summary",
+        "format-version": 1,
+        "snapshot-id": snapshot["snapshot-id"],
+        "groups": [
+            {"id": "section", "title": "SECTION", "items": projects},
+            {"id": "lens", "title": "LENS", "items": kinds},
+        ],
+        "panels": panels,
+        "foot": "federation.project=optagent",
+    }
+
+
+def _sessions_origin() -> dict:
+    """Phoenix frame. Traces are not copied into this deployment."""
+
+    return {
+        "format": "optagent-sessions",
+        "format-version": 1,
+        "provider": "arize-phoenix",
+        "connected": False,
+        "note": (
+            "Phoenix project is not connected. Agent traces stay in Phoenix "
+            "and are not copied into this deployment."
+        ),
+        "projects": [],
+    }
+
+
+def _cached_json(runtime, name: str, origin) -> dict:
+    """Ask Varnish for an origin document. Fall back to the origin builder.
+
+    The origin builder must not call this. Varnish fetches the *_origin URL
+    from this process, and that handler returns the builder directly.
+    """
 
     port = os.environ.get("OPTAGENT_VARNISH_PORT", "6095")
-    url = f"http://127.0.0.1:{port}/api/optagent/v1/snapshot_origin"
+    url = f"http://127.0.0.1:{port}/api/optagent/v1/{name}"
     try:
         with urllib.request.urlopen(url, timeout=1.5) as response:
             loaded = json.load(response)
     except (OSError, json.JSONDecodeError, TimeoutError):
-        return _origin_snapshot(runtime)
-    return loaded if isinstance(loaded, dict) else _origin_snapshot(runtime)
+        loaded = origin(runtime)
+    return loaded if isinstance(loaded, dict) else origin(runtime)
+
+
+def _cached_snapshot(runtime) -> dict:
+    """Ask Varnish for the snapshot document. Fall back to the origin."""
+
+    return _cached_json(runtime, "snapshot_origin", _origin_snapshot)
 
 
 def _open_session(headers: dict | None):
@@ -682,6 +748,14 @@ def response_for(
     enabled, source = effective_sample_mode(session, runtime.sample_mode)
     if parsed.path == "/api/optagent/v1/snapshot_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_origin_snapshot(runtime)).encode(), extra
+    if parsed.path == "/api/optagent/v1/summary_origin":
+        return 200, "application/json; charset=utf-8", json.dumps(_summary_origin(runtime)).encode(), extra
+    if parsed.path == "/api/optagent/v1/sessions_origin":
+        return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin()).encode(), extra
+    if parsed.path == "/api/optagent/v1/summary":
+        return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "summary_origin", _summary_origin)).encode(), extra
+    if parsed.path == "/api/optagent/v1/sessions":
+        return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", lambda _runtime: _sessions_origin())).encode(), extra
     document = _cached_snapshot(runtime) if enabled else None
     view = {
         "sample_mode": enabled,

@@ -134,7 +134,7 @@ def test_listen_port(monkeypatch) -> None:
     assert APP.listen_host() == "127.0.0.1"
 
 
-def test_tiers_and_sessions_pages() -> None:
+def test_tiers_page_names_the_span_stores() -> None:
     status, content_type, body, _extra = APP.response_for("GET", "/tiers")
     page = body.decode("utf-8")
     assert status == 200
@@ -143,11 +143,41 @@ def test_tiers_and_sessions_pages() -> None:
     assert "kudu_scan" in page
     assert "span_tier1" in page
     assert "impala_sql" in page
-    status, _, body, _extra = APP.response_for("GET", "/sessions")
-    page = body.decode("utf-8")
+
+
+def test_framed_pages_share_one_shell() -> None:
+    shell = None
+    for route in ("/", "/sessions", "/summary", "/terminal", "/settings"):
+        status, content_type, body, _extra = APP.response_for("GET", route)
+        page = body.decode("utf-8")
+        assert status == 200
+        assert content_type.startswith("text/html")
+        assert "<title>OptAgent</title>" in page
+        assert 'id="root"' in page
+        shell = shell or page
+        assert page == shell
+
+
+def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "1")
+    status, content_type, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary_origin")
+    summary = json.loads(body)
     assert status == 200
-    assert "weathership/oss-agentsview" in page
-    assert "go.kenn.io/agentsview" in page
+    assert content_type.startswith("application/json")
+    assert summary["format"] == "optagent-summary"
+    assert summary["groups"][0]["title"] == "SECTION"
+    assert any(panel["project"] == "aegir" for panel in summary["panels"])
+    assert "metadata-location" in summary["panels"][0]["body"]
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/sessions_origin")
+    sessions = json.loads(body)
+    assert sessions["provider"] == "arize-phoenix"
+    assert sessions["connected"] is False
+    assert sessions["projects"] == []
+    assert "not copied" in sessions["note"]
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary")
+    assert json.loads(body)["format"] == "optagent-summary"
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/sessions")
+    assert json.loads(body)["provider"] == "arize-phoenix"
 
 
 def test_health_and_unknown_routes() -> None:

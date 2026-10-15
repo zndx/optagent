@@ -102,6 +102,11 @@ def test_devenv_is_the_local_runtime() -> None:
     assert 'path = "/health"' in nix
     assert 'tasks."devenv:enterTest"' in nix
     assert "python -m pytest" in nix
+    assert "services.varnish" in nix
+    assert 'listen = "127.0.0.1:6095"' in nix
+    assert "snapshot_origin|summary_origin|sessions_origin" in nix
+    assert "unset beresp.http.Set-Cookie" in nix
+    assert "set beresp.ttl = 60s" in nix
     assert "services.postgres" in nix
     assert "package = pkgs.postgresql_16" in nix
     assert "port = 5599" in nix

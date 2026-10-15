@@ -19,9 +19,21 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "agentsview" not in source
     assert 'label="Dark theme"' in source
     assert "Logo brand pack" in source
+    for label in ("Landing", "Sessions", "Summary", "Terminal", "Settings"):
+        assert f'label: "{label}"' in source
+    assert "Arize Phoenix" in source
+    assert "sum-rail" in source
+    assert "sum-panel" in source
+    assert 'id="terminal"' in source
+    assert "Ghostty not connected" in source
+    assert "height={28}" in source
     css = (ROOT / "ui" / "src" / "index.css").read_text(encoding="utf-8")
     assert "@cloudflare/kumo/styles/tailwind" in css
     assert "theme-keiretsu.css" in css
+    assert ".brand-logo" in css
+    assert "height: 28px" in css
+    assert ".sum-trail" in css
+    assert ".term-full" in css
 
 
 def test_snapshot_chord_is_holoviews_input() -> None:
