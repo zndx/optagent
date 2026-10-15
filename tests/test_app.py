@@ -136,7 +136,7 @@ def test_listen_port(monkeypatch) -> None:
     assert APP.app_port() == 8123
     monkeypatch.delenv("PORT")
     monkeypatch.delenv("CDSW_APP_PORT")
-    assert APP.app_port() == 8123
+    assert APP.app_port() == 9892
 
 
 def test_tiers_and_sessions_pages() -> None:

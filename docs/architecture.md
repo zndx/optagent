@@ -12,11 +12,11 @@ flowchart TD
 
 | Piece | Role |
 | --- | --- |
-| `devenv.nix` | Local Python 3.12 environment and PostgreSQL 16 on port 5466. `languages.python` with uv syncs the project, including the `dev` extra. `processes.prepare` is the one-shot job. `processes.app` serves the page on port 8123 after that job finishes |
+| `devenv.nix` | Local Python 3.12 environment and PostgreSQL 16 on port 5466. `languages.python` with uv syncs the project, including the `dev` extra. `processes.prepare` is the one-shot job. `processes.app` serves the page on lattice port 9892 after that job finishes |
 | `components/impala_fdw` | `weathership/impala_fdw` `trunk`. Native PostgreSQL extension. Kudu scans and writes use `kudu_scan`. Iceberg tables and Impala UNION views use `impala_sql` |
 | `0_session-install-dependencies` | CML job that installs `requirements.txt`. The directory keeps the community template name. The task type is `create_job` / `run_job`. PBJ runtimes fail AMP setup steps that run as sessions |
 | `1_job-prepare-project` | Writes the status snapshot. Imports the model from `src/` |
-| `2_app-serve` | Serves the snapshot. Listens on `127.0.0.1`. CML sets `CDSW_APP_PORT`. Locally the port is 8123 |
+| `2_app-serve` | Serves the UI. Listens on `127.0.0.1`. CML sets `CDSW_APP_PORT`. Locally the port is **9892** |
 | `.project-metadata.yaml` | CML runbook. PBJ Workbench on Python 3.12 or 3.13, and JupyterLab on Python 3.12, Standard edition |
 | `catalog-entry.yaml` | Entry for a custom CML AMP catalog |
 | `METADATA.yaml` | Fields for the Cloudera blueprint website |
@@ -99,7 +99,10 @@ The session browser source is the local agentsview checkout `../../rch/oss-agent
 | `IMPALA_FDW_AUTH` | `kerberos` | The only accepted auth value |
 | `OPTAGENT_GREETING` | `Hello from the Optagent AMP template.` | Text the job records and the page shows before a snapshot exists |
 | `OPTAGENT_STATUS_PATH` | `assets/data/status.json` | Snapshot path. Relative paths are inside the repository |
-| `PORT` | `8123` when unset | Listen port. The devenv process sets `8123` |
+| `PORT` | `9892` when unset | Listen port. The devenv process sets `9892` |
+| `OPTAGENT_PRIMARY_UI` | `http://127.0.0.1:9892` | Lattice URL for this UI. Signals is `:9889`. Gaius is `:9890` |
+
+`devenv up` binds that URL on this machine. The federation waffle lists a peer only after that peer answers `Engine/Status` with a primary surface and a seed includes the engine in `PEERS`. Optagent does not serve Status yet, so Signals will not show it in the waffle until that join exists. Postgres for the local FDW stays on `:5466`, which is outside the published Postgres lattice (`:5444` Gaius, `:5455` Signals, `:5533` Atelier, `:5555` Ægir, `:5566` Synth, `:5588` taken). Warehouse queries in the amp posture still go to Signals Impala, not to this postmaster.
 | `CDSW_APP_PORT` | | Listen port inside CML, used when `PORT` is unset |
 | `CDSW_PROJECT_DIR`, `ML_PROJECT_DIR` | | Repository root inside CML |
 

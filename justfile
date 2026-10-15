@@ -9,7 +9,7 @@ test:
 prepare:
     uv run python 1_job-prepare-project/job.py
 
-# Serve the application on port 8123. CML sets CDSW_APP_PORT instead.
+# Serve the application on lattice port 9892. CML sets CDSW_APP_PORT instead.
 app:
     uv run python 2_app-serve/app.py
 

@@ -4,7 +4,8 @@
 """Serve the status snapshot over HTTP.
 
 CML sets CDSW_APP_PORT and reverse-proxies 127.0.0.1. Locally the process
-listens on port 8123. PORT overrides both.
+listens on port 9892, beside Signals :9889 and Gaius :9890.
+PORT overrides both. CML sets CDSW_APP_PORT.
 """
 
 import html
@@ -47,7 +48,7 @@ from optagent.status import greeting_from_env, read_status, status_path
 
 
 def app_port() -> int:
-    return int(os.environ.get("PORT") or os.environ.get("CDSW_APP_PORT") or "8123")
+    return int(os.environ.get("PORT") or os.environ.get("CDSW_APP_PORT") or "9892")
 
 
 def _chrome_controls(settings_active: bool = False) -> str:

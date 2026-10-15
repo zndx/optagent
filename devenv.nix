@@ -68,15 +68,16 @@
     restart.on = "never";
   };
 
-  # Same script as the CML application. 8123 stays clear of the usual
-  # 8080 listeners on a shared workstation. CML uses CDSW_APP_PORT.
+  # Product UI on the lab lattice, next to Signals :9889 and Gaius :9890.
+  # CML sets CDSW_APP_PORT and ignores this bind.
   processes.app = {
     exec = "python ${config.devenv.root}/2_app-serve/app.py";
-    env.PORT = "8123";
+    env.PORT = "9892";
+    env.OPTAGENT_PRIMARY_UI = "http://127.0.0.1:9892";
     after = [ "devenv:processes:prepare@completed" ];
     ready.http.get = {
       host = "127.0.0.1";
-      port = 8123;
+      port = 9892;
       path = "/health";
     };
     ready.period = 1;
@@ -86,7 +87,7 @@
   };
 
   enterShell = ''
-    echo "optagent: $(python --version) — just test, devenv up (http://127.0.0.1:8123)"
+    echo "optagent: $(python --version) — just test, devenv up (http://127.0.0.1:9892)"
   '';
 
   # devenv 2 runs this task during `devenv test`. The enterTest string
