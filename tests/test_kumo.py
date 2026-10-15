@@ -28,6 +28,9 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "landing-stat" in source
     assert "cog-year" in source
     assert "Arize Phoenix" in source
+    assert "Search sessions" in source
+    assert "All profiles" in source
+    assert 'aria-label="Tenant"' in source
     assert "sum-rail" in source
     assert "sum-panel" in source
     assert 'id="terminal"' in source

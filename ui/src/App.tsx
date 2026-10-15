@@ -24,6 +24,47 @@ type Panel = { id: string; title: string; project: string; kind: string; body: s
 type SummaryGroup = { id: string; title: string; items: string[] };
 type SummaryDoc = { groups?: SummaryGroup[]; panels?: Panel[]; foot?: string; "snapshot-id"?: string };
 
+type AgentProfile = {
+  name: string;
+  display_name: string;
+  tenant: string;
+  description: string;
+  is_default: boolean;
+  model: string | null;
+  "metadata-location"?: string;
+};
+
+type AgentSession = {
+  id: string;
+  tenant: string;
+  profile: string;
+  title: string;
+  source: string;
+  category: "chats" | "automation" | string;
+  is_active: boolean;
+  archived: boolean;
+  message_count: number;
+  tool_call_count: number;
+  preview: string;
+};
+
+type SessionsDoc = {
+  note?: string;
+  connected?: boolean;
+  tenants?: { id: string; display_name: string }[];
+  profiles?: AgentProfile[];
+  sessions?: AgentSession[];
+  stats?: {
+    total: number;
+    active: number;
+    archived: number;
+    messages: number;
+    profiles: number;
+    tenants: number;
+    by_source: Record<string, number>;
+  };
+};
+
 type Workspace = {
   sample_mode: boolean;
   sample_mode_source: string;
@@ -67,7 +108,7 @@ export default function App() {
   const [summary, setSummary] = useState<SummaryDoc>({});
   const [section, setSection] = useState("all");
   const [lens, setLens] = useState("all");
-  const [traces, setTraces] = useState("Phoenix project is not connected.");
+  const [sessionsDoc, setSessionsDoc] = useState<SessionsDoc>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
 
@@ -109,8 +150,8 @@ export default function App() {
     if (route !== "/sessions") return;
     fetch("/api/optagent/v1/sessions")
       .then((response) => response.json())
-      .then((data: { note?: string }) => setTraces(data.note || "Phoenix project is not connected."))
-      .catch(() => setTraces("Phoenix project is not connected."));
+      .then((data: SessionsDoc) => setSessionsDoc(data))
+      .catch(() => setSessionsDoc({}));
   }, [route]);
 
   async function post(path: string, payload: object) {
@@ -170,7 +211,17 @@ export default function App() {
       </header>
       <main className="shell-main">
         {route === "/" && <Landing workspace={workspace} onRefresh={() => void reloadWorkspace()} />}
-        {route === "/sessions" && <Sessions note={traces} />}
+        {route === "/sessions" && (
+          <Sessions
+            doc={sessionsDoc}
+            onRefresh={() => {
+              fetch("/api/optagent/v1/sessions")
+                .then((response) => response.json())
+                .then((data: SessionsDoc) => setSessionsDoc(data))
+                .catch(() => setSessionsDoc({}));
+            }}
+          />
+        )}
         {route === "/summary" && (
           <Summary
             summary={summary}
@@ -404,29 +455,230 @@ function Contrib({ title, rows, max }: { title: string; rows: [string, number][]
   );
 }
 
-function Sessions({ note }: { note: string }) {
+const SESSION_CATEGORIES = [
+  ["chats", "Chats"],
+  ["automation", "Automation"],
+  ["all", "All"],
+] as const;
+
+function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void }) {
+  const [tenant, setTenant] = useState("");
+  const [profile, setProfile] = useState("");
+  const [category, setCategory] = useState<(typeof SESSION_CATEGORIES)[number][0]>("all");
+  const [source, setSource] = useState("");
+  const [query, setQuery] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const tenants = doc.tenants ?? [];
+  const profiles = (doc.profiles ?? []).filter((item) => !tenant || item.tenant === tenant);
+  const selected = profiles.find((item) => item.name === profile && (!tenant || item.tenant === tenant)) ?? null;
+  const needle = query.trim().toLowerCase();
+  const rows = (doc.sessions ?? []).filter((item) => {
+    if (tenant && item.tenant !== tenant) return false;
+    if (selected && (item.profile !== selected.name || item.tenant !== selected.tenant)) return false;
+    if (category !== "all" && item.category !== category) return false;
+    if (source && item.source !== source) return false;
+    if (!needle) return true;
+    const haystack = `${item.title} ${item.profile} ${item.tenant} ${item.source} ${item.preview}`.toLowerCase();
+    return haystack.includes(needle);
+  });
+  const sources = [...new Set((doc.sessions ?? []).map((item) => item.source))].sort();
+  const stats = doc.stats;
+  const cards: [string, string, string][] = [
+    [String(stats?.total ?? "—"), "Sessions", "lanes"],
+    [String(stats?.active ?? "—"), "Active", "in store"],
+    [String(stats?.archived ?? "—"), "Archived", ""],
+    [String(stats?.messages ?? "—"), "Messages", "not copied"],
+    [String(stats?.profiles ?? "—"), "Profiles", "named + default"],
+    [String(stats?.tenants ?? "—"), "Tenants", "federated"],
+  ];
+
   return (
-    <section className="page">
-      <h1>Sessions</h1>
-      <p className="muted">Arize Phoenix agent tracing. Traces stay in Phoenix and are not copied here.</p>
-      <div className="frame-card">
-        <strong>Phoenix</strong>
-        <span>{note}</span>
-        <table>
-          <thead>
-            <tr>
-              <th>Project</th>
-              <th>Spans</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr>
-              <td colSpan={2}>No Phoenix project is connected.</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    <div className="cog-page">
+      <aside className="cog-rail" aria-label="Agent profiles">
+        <div className="cog-rail-head">
+          <span className="cog-kicker">{profiles.length} PROFILES</span>
+          <label className="cog-sr-only" htmlFor="ses-tenant">
+            Tenant
+          </label>
+          <select
+            id="ses-tenant"
+            className="cog-select"
+            aria-label="Tenant"
+            value={tenant}
+            onChange={(event) => {
+              setTenant(event.target.value);
+              setProfile("");
+              setOpenId(null);
+            }}
+          >
+            <option value="">All tenants</option>
+            {tenants.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.display_name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <ul className="cog-rail-list">
+          <li>
+            <button
+              type="button"
+              className={profile === "" ? "cog-rail-item active" : "cog-rail-item"}
+              onClick={() => setProfile("")}
+            >
+              <div className="cog-rail-title">All profiles</div>
+              <div className="cog-rail-meta">
+                <span className="cog-type">SCOPE</span>
+                <span className="muted">{tenant || "every tenant"}</span>
+              </div>
+            </button>
+          </li>
+          {profiles.map((item) => (
+            <li key={`${item.tenant}/${item.name}`}>
+              <button
+                type="button"
+                className={
+                  selected?.name === item.name && selected.tenant === item.tenant
+                    ? "cog-rail-item active"
+                    : "cog-rail-item"
+                }
+                onClick={() => {
+                  setProfile(item.name);
+                  if (!tenant) setTenant(item.tenant);
+                }}
+              >
+                <div className="cog-rail-title">{item.display_name}</div>
+                <div className="cog-rail-meta">
+                  <span className="cog-type">{item.is_default ? "DEFAULT" : item.name}</span>
+                  <span className="muted">{item.tenant}</span>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="cog-rail-foot mono muted">
+          federation.project=optagent · {tenants.length} tenants
+        </div>
+      </aside>
+      <section className="cog-main">
+        <div className="cog-toolbar">
+          <div className="ses-seg" role="group" aria-label="Session category">
+            {SESSION_CATEGORIES.map(([value, label]) => (
+              <button
+                key={value}
+                type="button"
+                className={category === value ? "active" : undefined}
+                aria-pressed={category === value}
+                onClick={() => setCategory(value)}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+          <label className="cog-toolbar-label">
+            Source
+            <select
+              className="cog-select"
+              aria-label="Source"
+              value={source}
+              onChange={(event) => setSource(event.target.value)}
+            >
+              <option value="">Any source</option>
+              {sources.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                  {doc.stats?.by_source?.[item] != null ? ` · ${doc.stats.by_source[item]}` : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <input
+            className="ses-search"
+            type="search"
+            placeholder="Search sessions"
+            aria-label="Search sessions"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <button type="button" className="btn" onClick={onRefresh}>
+            Refresh
+          </button>
+          <span className="pill">{doc.connected ? "phoenix" : "not connected"}</span>
+        </div>
+        <p className="muted cog-empty">
+          {doc.note || "Arize Phoenix agent tracing. Traces stay in Phoenix and are not copied here."}
+        </p>
+        <div className="cog-stats" aria-label="Session totals">
+          {cards.map(([value, label, sub]) => (
+            <div className="landing-stat" key={label}>
+              <div className="landing-stat-value">{value}</div>
+              <div className="landing-stat-label">{label}</div>
+              {sub ? <div className="muted cog-stat-sub">{sub}</div> : null}
+            </div>
+          ))}
+        </div>
+        <div className="cog-split">
+          <div className="cog-panel">
+            <div className="cog-panel-head">
+              <h2>Sessions</h2>
+              <span className="muted">{rows.length}</span>
+            </div>
+            {rows.length === 0 ? <p className="muted cog-empty">No sessions in this filter.</p> : null}
+            <ol className="cog-top">
+              {rows.map((item) => (
+                <li key={item.id}>
+                  <button
+                    type="button"
+                    className={openId === item.id ? "ses-row open" : "ses-row"}
+                    onClick={() => setOpenId(openId === item.id ? null : item.id)}
+                  >
+                    <span className="cog-top-title">{item.title}</span>
+                    <span className="muted cog-top-sub">
+                      {item.tenant} · {item.profile} · {item.source}
+                      {item.is_active ? " · active" : ""}
+                    </span>
+                    <span className="cog-top-score">{item.category}</span>
+                  </button>
+                  {openId === item.id ? (
+                    <div className="ses-detail">
+                      <p>{item.preview}</p>
+                      <p className="muted mono">
+                        {item.message_count} messages · {item.tool_call_count} tool calls · archived{" "}
+                        {item.archived ? "yes" : "no"}
+                      </p>
+                    </div>
+                  ) : null}
+                </li>
+              ))}
+            </ol>
+          </div>
+          <div className="cog-panel">
+            <div className="cog-panel-head">
+              <h2>Profile</h2>
+              <span className="muted">{selected ? selected.name : "all"}</span>
+            </div>
+            {selected ? (
+              <div className="ses-detail">
+                <p className="cog-top-title">{selected.display_name}</p>
+                <p className="muted mono">
+                  {selected.tenant}/{selected.name}
+                  {selected.is_default ? " · default" : ""}
+                </p>
+                <p>{selected.description}</p>
+                <p className="muted">Model {selected.model || "—"}</p>
+                {selected["metadata-location"] ? (
+                  <p className="muted mono">{selected["metadata-location"]}</p>
+                ) : null}
+              </div>
+            ) : (
+              <p className="muted">
+                Choose a named profile to read its isolated lane. Each profile keeps its own sessions.
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
   );
 }
 

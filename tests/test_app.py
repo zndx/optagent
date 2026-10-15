@@ -172,8 +172,11 @@ def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:
     sessions = json.loads(body)
     assert sessions["provider"] == "arize-phoenix"
     assert sessions["connected"] is False
-    assert sessions["projects"] == []
+    assert sessions["format-version"] == 2
+    assert any(item["id"] == "aegir" for item in sessions["tenants"])
+    assert any(item["name"] == "default" and item["tenant"] == "aegir" for item in sessions["profiles"])
     assert "not copied" in sessions["note"]
+    assert all("messages" not in item for item in sessions["sessions"])
     status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary")
     assert json.loads(body)["format"] == "optagent-summary"
     status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/sessions")

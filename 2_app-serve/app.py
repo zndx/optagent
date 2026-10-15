@@ -664,20 +664,12 @@ def _summary_origin(runtime) -> dict:
     }
 
 
-def _sessions_origin() -> dict:
-    """Phoenix frame. Traces are not copied into this deployment."""
+def _sessions_origin(runtime) -> dict:
+    """Profile directory for the sessions page. Traces are not copied."""
 
-    return {
-        "format": "optagent-sessions",
-        "format-version": 1,
-        "provider": "arize-phoenix",
-        "connected": False,
-        "note": (
-            "Phoenix project is not connected. Agent traces stay in Phoenix "
-            "and are not copied into this deployment."
-        ),
-        "projects": [],
-    }
+    from optagent.sessions import directory_from_snapshot
+
+    return directory_from_snapshot(_origin_snapshot(runtime))
 
 
 def _cached_json(runtime, name: str, origin) -> dict:
@@ -751,11 +743,11 @@ def response_for(
     if parsed.path == "/api/optagent/v1/summary_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_summary_origin(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions_origin":
-        return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin()).encode(), extra
+        return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary":
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "summary_origin", _summary_origin)).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions":
-        return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", lambda _runtime: _sessions_origin())).encode(), extra
+        return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", _sessions_origin)).encode(), extra
     document = _cached_snapshot(runtime) if enabled else None
     view = {
         "sample_mode": enabled,
