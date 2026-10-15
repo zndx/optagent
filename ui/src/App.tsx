@@ -77,8 +77,8 @@ export default function App() {
     applyFavicon(data.brand?.favicon_href || data.brand?.logo_href || "");
   }
 
-  useEffect(() => {
-    fetch("/api/optagent/v1/workspace")
+  function reloadWorkspace() {
+    return fetch("/api/optagent/v1/workspace")
       .then((response) => {
         if (!response.ok) throw new Error(`workspace ${response.status}`);
         return response.json() as Promise<Workspace>;
@@ -91,6 +91,10 @@ export default function App() {
         setError(err instanceof Error ? err.message : "workspace unavailable");
         setBusy(false);
       });
+  }
+
+  useEffect(() => {
+    void reloadWorkspace();
   }, []);
 
   useEffect(() => {
@@ -153,12 +157,19 @@ export default function App() {
             </a>
           ))}
         </nav>
-        <a className="chrome-icon" href="/settings" aria-label="Settings" title="Settings">
-          <Gear />
-        </a>
+        <div className="chrome-right">
+          <a
+            className={route === "/settings" ? "chrome-icon-btn active" : "chrome-icon-btn"}
+            href="/settings"
+            aria-label="Settings"
+            title="Settings"
+          >
+            <Gear />
+          </a>
+        </div>
       </header>
       <main className="shell-main">
-        {route === "/" && <Landing />}
+        {route === "/" && <Landing workspace={workspace} onRefresh={() => void reloadWorkspace()} />}
         {route === "/sessions" && <Sessions note={traces} />}
         {route === "/summary" && (
           <Summary
@@ -190,18 +201,206 @@ export default function App() {
   );
 }
 
-function Landing() {
+const WINDOWS = [
+  ["24h", "Last 24 hours"],
+  ["7d", "Last 7 days"],
+  ["30d", "Last 30 days"],
+  ["90d", "Last 90 days"],
+  ["365d", "Last year"],
+  ["all", "All history"],
+] as const;
+
+const DOW = ["", "Mon", "", "Wed", "", "Fri", ""];
+
+function countBy(members: Member[], key: "project" | "kind"): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const member of members) {
+    const name = member[key];
+    counts.set(name, (counts.get(name) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+function Landing({ workspace, onRefresh }: { workspace: Workspace | null; onRefresh: () => void }) {
+  const [project, setProject] = useState("");
+  const [windowId, setWindowId] = useState("365d");
+  const members = workspace?.snapshot?.members ?? [];
+  const projects = countBy(members, "project");
+  const visible = project ? members.filter((member) => member.project === project) : members;
+  const visibleProjects = countBy(visible, "project");
+  const kinds = countBy(visible, "kind");
+  const kindCount = (name: string) => kinds.find(([kind]) => kind === name)?.[1] ?? 0;
+  const sample = Boolean(workspace?.sample_mode && members.length);
+  const stats: [string, string, string][] = sample
+    ? [
+        [String(visibleProjects.length), "Projects", "snapshot pointer"],
+        [String(visible.length), "Members", workspace?.sample_mode_source || "session"],
+        [String(kinds.length), "Kinds", "iceberg · kudu · files"],
+        [String(kindCount("iceberg")), "Iceberg", "metadata only"],
+        [String(kindCount("kudu")), "Kudu", "metadata only"],
+        [String(kindCount("files")), "Files", "metadata only"],
+      ]
+    : [
+        ["—", "Projects", "warehouse not contacted"],
+        ["—", "Members", "no snapshot"],
+        ["—", "Kinds", ""],
+        ["—", "Iceberg", ""],
+        ["—", "Kudu", ""],
+        ["—", "Files", ""],
+      ];
+  const maxProject = Math.max(1, ...visibleProjects.map(([, n]) => n));
+  const maxKind = Math.max(1, ...kinds.map(([, n]) => n));
+
   return (
-    <section className="page">
-      <h1>OptAgent</h1>
-      <p className="muted">A workspace for agent traces, snapshot lineups, and a terminal. The live warehouse stays where it is.</p>
-      <div className="card-row">
-        <a className="frame-card" href="/sessions"><strong>Sessions</strong><span>Arize Phoenix agent tracing</span></a>
-        <a className="frame-card" href="/summary"><strong>Summary</strong><span>Lineup of rich-text panels</span></a>
-        <a className="frame-card" href="/terminal"><strong>Terminal</strong><span>Embedded Ghostty</span></a>
-        <a className="frame-card" href="/settings"><strong>Settings</strong><span>Brand, theme, sample mode</span></a>
-      </div>
-    </section>
+    <div className="cog-page">
+      <aside className="cog-rail" aria-label="Agent stream">
+        <div className="cog-rail-head">
+          <span className="cog-kicker">{sample ? `${visible.length} MEMBERS` : "— AGENTS"}</span>
+          <label className="cog-sr-only" htmlFor="cog-stream">
+            Stream
+          </label>
+          <select
+            id="cog-stream"
+            className="cog-select"
+            aria-label="Stream"
+            value={project}
+            onChange={(event) => setProject(event.target.value)}
+          >
+            <option value="">All projects</option>
+            {projects.map(([name, count]) => (
+              <option key={name} value={name}>
+                {name} · {count}
+              </option>
+            ))}
+          </select>
+        </div>
+        <ul className="cog-rail-list">
+          {visible.length === 0 ? <li className="cog-rail-empty muted">No agents in this window.</li> : null}
+          {visible.map((member) => (
+            <li className="cog-rail-item" key={`${member.project}/${member.kind}/${member.name}`}>
+              <div className="cog-rail-title">{member.name}</div>
+              <div className="cog-rail-meta">
+                <span className="cog-type">{member.kind.toUpperCase()}</span>
+                <span className="muted">{member.project}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+        <div className="cog-rail-foot mono muted">
+          federation.project=optagent
+          {sample ? ` · ${members.length} members · ${projects.length} projects` : ""}
+        </div>
+      </aside>
+      <section className="cog-main">
+        <div className="cog-toolbar">
+          <label className="cog-toolbar-label">
+            Window
+            <select
+              className="cog-select"
+              aria-label="Window"
+              value={windowId}
+              onChange={(event) => setWindowId(event.target.value)}
+            >
+              {WINDOWS.map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="btn" onClick={onRefresh}>
+            Refresh
+          </button>
+          <span className="muted mono">{sample ? "sample pointer" : "UTC"}</span>
+          <span className="cog-live-dot" title="live stream" />
+          <span className="pill">{sample ? "sample" : "idle"}</span>
+        </div>
+        <div className="cog-stats" aria-label="Optimization totals">
+          {stats.map(([value, label, sub]) => (
+            <div className="landing-stat" key={label}>
+              <div className="landing-stat-value">{value}</div>
+              <div className="landing-stat-label">{label}</div>
+              {sub ? <div className="muted cog-stat-sub">{sub}</div> : null}
+            </div>
+          ))}
+        </div>
+        <div className="cog-panel">
+          <div className="cog-panel-head">
+            <h2>Activity</h2>
+            <span className="muted">
+              {WINDOWS.find(([value]) => value === windowId)?.[1] ?? "Last year"}
+            </span>
+          </div>
+          <div className="cog-year" role="img" aria-label="Activity heatmap">
+            <div className="cog-year-row">
+              <div className="cog-year-dows">
+                {DOW.map((label, index) => (
+                  <span key={index}>{label}</span>
+                ))}
+              </div>
+              <div className="cog-year-weeks">
+                {Array.from({ length: 53 }, (_, week) => (
+                  <div className="cog-year-col" key={week}>
+                    {Array.from({ length: 7 }, (_, day) => (
+                      <span className="cog-cell cog-h0" key={day} title="no spans" />
+                    ))}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <p className="muted cog-empty">No spans in this window. Impala is not contacted.</p>
+        </div>
+        <div className="cog-split">
+          <div className="cog-panel">
+            <div className="cog-panel-head">
+              <h3>Contributions</h3>
+            </div>
+            <div className="cog-contrib" aria-label="Contributions by project and kind">
+              <Contrib title="By project" rows={visibleProjects} max={maxProject} />
+              <Contrib title="By kind" rows={kinds} max={maxKind} />
+            </div>
+          </div>
+          <div className="cog-panel">
+            <div className="cog-panel-head">
+              <h2>Top members</h2>
+              <span className="muted">kind</span>
+            </div>
+            <ol className="cog-top">
+              {visible.length === 0 ? <li className="muted cog-empty">No members in this window.</li> : null}
+              {visible.slice(0, 8).map((member, index) => (
+                <li className="cog-top-item" key={`${member.project}/${member.name}`}>
+                  <span className="cog-top-n">{index + 1}</span>
+                  <span>
+                    <div className="cog-top-title">{member.name}</div>
+                    <div className="muted cog-top-sub">{member.project}</div>
+                  </span>
+                  <span className="cog-top-score">{member.kind}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function Contrib({ title, rows, max }: { title: string; rows: [string, number][]; max: number }) {
+  return (
+    <>
+      <div className="cog-contrib-h mono muted">{title.toUpperCase()}</div>
+      {rows.length === 0 ? <div className="muted cog-empty">No {title.toLowerCase()} in this window.</div> : null}
+      {rows.map(([name, count]) => (
+        <div className="cog-contrib-row" key={name}>
+          <span className="cog-contrib-name mono">{name}</span>
+          <span className="cog-contrib-track">
+            <span className="cog-contrib-bar" style={{ width: `${(count / max) * 100}%` }} />
+          </span>
+          <span className="cog-contrib-n mono muted">{count}</span>
+        </div>
+      ))}
+    </>
   );
 }
 

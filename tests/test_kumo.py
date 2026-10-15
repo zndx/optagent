@@ -23,6 +23,10 @@ def test_settings_page_uses_the_kumo_switch() -> None:
         assert f'label: "{label}"' in source
     assert 'label: "Landing"' not in source
     assert 'className="brand" href="/"' in source
+    assert "cog-page" in source
+    assert "cog-rail" in source
+    assert "landing-stat" in source
+    assert "cog-year" in source
     assert "Arize Phoenix" in source
     assert "sum-rail" in source
     assert "sum-panel" in source
