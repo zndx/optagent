@@ -49,11 +49,16 @@ def test_sample_mode_api_round_trip() -> None:
     assert content_type.startswith("application/json")
     assert payload["sample_mode"] is True
     assert payload["snapshot_s3_uri"].startswith("s3://")
-    assert any(key == "Set-Cookie" and "optagent-sample-mode=on" in value for key, value in extra)
+    cookie = next(value for key, value in extra if key == "Set-Cookie")
+    assert "optagent_sid=" in cookie
+    assert "HttpOnly" in cookie
     status, _, body, _extra = app.response_for(
         "GET",
-        "/api/optagent/v1/settings",
-        {"Cookie": "optagent-sample-mode=on"},
+        "/api/optagent/v1/workspace",
+        {"Cookie": cookie.split(";", 1)[0]},
     )
+    loaded = json.loads(body)
     assert status == 200
-    assert json.loads(body)["sample_mode"] is True
+    assert loaded["sample_mode"] is True
+    assert loaded["sample_mode_source"] == "session"
+    assert loaded["snapshot"]["members"]

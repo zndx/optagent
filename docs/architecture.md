@@ -58,9 +58,11 @@ The amp baseline is a SOPS dotenv. `config/amp.env.example` lists the keys. Afte
 
 `signals-snapshot` is a root pointer in the Iceberg sense, the role Project Nessie plays for a metadata file. The document names federated members (Kudu, Iceberg, files, relational) by `metadata-location`. It does not contain the table bytes. A deployment adds a project or a kind the loader has not seen. Unknown kinds are kept. The bundled sample lists Signals, Gaius, Atelier, Ægir, Metabase, and Semantica.
 
-The settings page is a Vite app on Cloudflare Kumo, the same component set Ægir uses, with the Keiretsu token file loaded before Tailwind. Sample mode is a Kumo `Switch` on that page. It posts to `/api/optagent/v1/sample-mode`. Snapshot membership for a later `hv.Chord` is built by `optagent.viz.chord_tables`. Rendering uses the `viz` extra (HoloViews, Datashader, Bokeh, Panel), the same path as Ægir's lineup chord. The default install does not pull that stack.
+The browser talks to the application on `:9892`. Varnish listens on `:6095`, the next port after Atelier `:6094`, and caches `GET /api/optagent/v1/snapshot_origin` for 60 seconds with 6 hours of grace. The workspace route asks Varnish first and builds the document itself when Varnish is down. That is the same shape as Gaius Cognition's discover route and Ægir's lineup: the slow read is an origin document, and the page renders from the cache.
 
-Sample mode is `OPTAGENT_SAMPLE_MODE` plus that switch. The AMP turns it on so a walkthrough runs before Impala answers. The snapshot URI is `OPTAGENT_SNAPSHOT_S3_URI`. On a workstation the endpoint is Signals' RustFS at `http://127.0.0.1:9010`. This project does not run that store. In the AMP the endpoint is empty and the URI is AWS S3.
+HOCON in `config/base.conf` is the deployment default. A browser session, stored under `.devenv/state` and named by the `optagent_sid` cookie, may override sample mode. The URL does not. The Kumo `Switch` posts to `/api/optagent/v1/sample-mode`. With sample mode on, the page is an AgentsView session whose lineup is the snapshot members, the same list-and-detail gesture as Ægir's lineup. `optagent.viz.chord_tables` is the HoloViews and Datashader input for that lineup. The `viz` extra supplies those libraries. The default install does not.
+
+Sample mode is `OPTAGENT_SAMPLE_MODE` plus that session override. The AMP turns it on so a walkthrough runs before Impala answers. The snapshot URI is `OPTAGENT_SNAPSHOT_S3_URI`. On a workstation the endpoint is Signals' RustFS at `http://127.0.0.1:9010`. This project does not run that store. In the AMP the endpoint is empty and the URI is AWS S3.
 
 An explicit environment variable wins over the decrypted file.
 

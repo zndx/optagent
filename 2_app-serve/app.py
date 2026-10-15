@@ -13,6 +13,7 @@ import json
 import os
 import sys
 import urllib.parse
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -594,6 +595,52 @@ def _ui_file(route: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
+def _origin_snapshot(runtime) -> dict:
+    from optagent.snapshot import resolve_snapshot
+
+    snapshot = resolve_snapshot(runtime.snapshot_s3_uri)
+    return {
+        "format": "signals-snapshot",
+        "format-version": 1,
+        "snapshot-id": snapshot.snapshot_id,
+        "parent-snapshot-id": snapshot.parent_snapshot_id,
+        "sequence-number": snapshot.sequence_number,
+        "timestamp-ms": snapshot.timestamp_ms,
+        "summary": snapshot.summary,
+        "location": runtime.snapshot_s3_uri or snapshot.location,
+        "members": [
+            {
+                "project": member.project,
+                "kind": member.kind,
+                "name": member.name,
+                "metadata-location": member.metadata_location,
+            }
+            for member in snapshot.members
+        ],
+    }
+
+
+def _cached_snapshot(runtime) -> dict:
+    """Ask Varnish for the snapshot document. Fall back to the origin."""
+
+    port = os.environ.get("OPTAGENT_VARNISH_PORT", "6095")
+    url = f"http://127.0.0.1:{port}/api/optagent/v1/snapshot_origin"
+    try:
+        with urllib.request.urlopen(url, timeout=1.5) as response:
+            loaded = json.load(response)
+    except (OSError, json.JSONDecodeError, TimeoutError):
+        return _origin_snapshot(runtime)
+    return loaded if isinstance(loaded, dict) else _origin_snapshot(runtime)
+
+
+def _open_session(headers: dict | None):
+    from optagent.web_session import cookie_header, ensure, sid_from_cookie
+
+    header = None if headers is None else headers.get("Cookie")
+    session, _created = ensure(sid_from_cookie(header))
+    return session, [cookie_header(session["id"])]
+
+
 def response_for(
     method: str,
     path: str,
@@ -602,33 +649,43 @@ def response_for(
 ) -> tuple[int, str, bytes, list[tuple[str, str]]]:
     parsed = urllib.parse.urlparse(path)
     from optagent.config import load_runtime
-    from optagent.snapshot import resolve_snapshot
+    from optagent.web_session import effective_sample_mode, set_sample_mode
 
     runtime = load_runtime()
-    cookie = None if headers is None else headers.get("Cookie")
+    session, extra = _open_session(headers)
     if method == "POST" and parsed.path == "/api/optagent/v1/sample-mode":
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
         except json.JSONDecodeError:
-            return 400, "application/json; charset=utf-8", b'{"error":"invalid json"}\n', []
-        enabled = bool(payload.get("enabled"))
-        extra = [(
-            "Set-Cookie",
-            f"optagent-sample-mode={'on' if enabled else 'off'}; Path=/; SameSite=Lax",
-        )]
-        return 200, "application/json; charset=utf-8", _settings_payload(enabled), extra
-    if method != "GET":
-        return 405, "text/plain; charset=utf-8", b"method not allowed\n", []
-    enabled, written = _sample_choice(parsed.query, cookie, runtime.sample_mode)
-    extra: list[tuple[str, str]] = []
-    if written is not None:
-        extra.append((
-            "Set-Cookie",
-            f"optagent-sample-mode={written}; Path=/; SameSite=Lax",
-        ))
-    if parsed.path == "/api/optagent/v1/settings":
-        return 200, "application/json; charset=utf-8", _settings_payload(enabled), extra
-    sample = resolve_snapshot(runtime.snapshot_s3_uri) if enabled else None
+            return 400, "application/json; charset=utf-8", b'{"error":"invalid json"}\n', extra
+        session = set_sample_mode(session["id"], bool(payload.get("enabled")))
+    elif method != "GET":
+        return 405, "text/plain; charset=utf-8", b"method not allowed\n", extra
+    enabled, source = effective_sample_mode(session, runtime.sample_mode)
+    if parsed.path == "/api/optagent/v1/snapshot_origin":
+        return 200, "application/json; charset=utf-8", json.dumps(_origin_snapshot(runtime)).encode(), extra
+    document = _cached_snapshot(runtime) if enabled else None
+    view = {
+        "sample_mode": enabled,
+        "sample_mode_source": source,
+        "session_id": session["id"],
+        "snapshot_s3_uri": runtime.snapshot_s3_uri,
+        "snapshot_endpoint": runtime.snapshot_endpoint,
+        "traces_s3_uri": runtime.traces_s3_uri,
+        "snapshot": document,
+    }
+    encoded = json.dumps(view).encode("utf-8")
+    if parsed.path in {
+        "/api/optagent/v1/settings",
+        "/api/optagent/v1/workspace",
+        "/api/optagent/v1/sample-mode",
+    }:
+        return 200, "application/json; charset=utf-8", encoded, extra
+    sample = None
+    if enabled and document is not None:
+        from optagent.snapshot import parse_snapshot
+
+        sample = parse_snapshot(document, location=str(document.get("location") or ""))
     status, content_type, page = _page(parsed.path, sample)
     return status, content_type, page, extra
 

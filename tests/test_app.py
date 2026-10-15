@@ -94,25 +94,26 @@ def test_settings_shows_the_trace_archive(monkeypatch) -> None:
     assert payload["traces_s3_uri"] == "s3://agent-archive/laptop/raw"
 
 
-def test_sample_mode_lists_the_workspace_and_sets_a_cookie() -> None:
-    status, _, body, extra = APP.response_for("GET", "/?sample=on")
-    assert status == 200
-    assert 'id="root"' in body.decode("utf-8")
-    assert any(key == "Set-Cookie" and "optagent-sample-mode=on" in value for key, value in extra)
-    status, _, ledger, _extra = APP.response_for("GET", "/ledger?sample=on")
+def test_sample_mode_is_a_session_not_a_query(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.delenv("OPTAGENT_SAMPLE_MODE", raising=False)
+    status, _, body, extra = APP.response_for("GET", "/api/optagent/v1/settings?sample=on")
+    assert json.loads(body)["sample_mode"] is False
+    assert json.loads(body)["sample_mode_source"] == "hocon"
+    status, _, body, extra = APP.response_for(
+        "POST",
+        "/api/optagent/v1/sample-mode",
+        {"Cookie": extra[0][1].split(";", 1)[0]},
+        b'{"enabled": true}',
+    )
+    assert json.loads(body)["sample_mode"] is True
+    cookie = next(value for key, value in extra if key == "Set-Cookie").split(";", 1)[0]
+    status, _, ledger, _extra = APP.response_for("GET", "/ledger", {"Cookie": cookie})
     page = ledger.decode("utf-8")
     assert "Sample workspace" in page
     assert "gaius" in page
-    assert "semantica" in page
     assert "Impala is not contacted" in page
-    status, _, settings, _extra = APP.response_for(
-        "GET",
-        "/api/optagent/v1/settings",
-        {"Cookie": "optagent-sample-mode=on"},
-    )
-    payload = json.loads(settings)
-    assert status == 200
-    assert payload["sample_mode"] is True
+    payload = json.loads(body)
     assert payload["snapshot_s3_uri"] == "s3://signals-snapshots/sample/workspace"
     assert payload["snapshot_endpoint"] == "http://127.0.0.1:9010"
 

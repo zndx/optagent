@@ -17,6 +17,46 @@
   # (:5455) use for impala_fdw. ElectricSQL PGlite cannot load the .so.
   # Thrift and Boost stay out of `packages`. The FDW task pins Nix
   # thrift so the .so does not link the Impala toolchain's 0.16.
+  # Varnish lattice: gaius 6091, signals 6092, aegir 6093, atelier 6094.
+  # Only the snapshot origin is cached. The browser still talks to :9892.
+  services.varnish = {
+    enable = true;
+    listen = "127.0.0.1:6095";
+    vcl = ''
+      vcl 4.1;
+
+      backend optagent_origin {
+        .host = "127.0.0.1";
+        .port = "9892";
+        .connect_timeout = 2s;
+        .first_byte_timeout = 30s;
+      }
+
+      sub vcl_recv {
+        if (req.url ~ "^/api/optagent/v1/snapshot_origin") {
+          return (hash);
+        }
+        return (pass);
+      }
+
+      sub vcl_backend_response {
+        if (bereq.url ~ "^/api/optagent/v1/snapshot_origin") {
+          if (beresp.status >= 400) {
+            if (bereq.is_bgfetch) {
+              return (abandon);
+            }
+            set beresp.ttl = 1s;
+            set beresp.grace = 0s;
+            set beresp.uncacheable = true;
+          } else {
+            set beresp.ttl = 60s;
+            set beresp.grace = 6h;
+          }
+        }
+      }
+    '';
+  };
+
   services.postgres = {
     enable = true;
     package = pkgs.postgresql_16;
@@ -68,6 +108,8 @@
     env.OPTAGENT_ENGINE_PORT = "50851";
     env.OPTAGENT_UI_PORT = "9892";
     env.OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892";
+    env.OPTAGENT_VARNISH_PORT = "6095";
+    env.OPTAGENT_SESSION_DIR = "${config.devenv.root}/.devenv/state";
     ready.exec = "python -m optagent.engine_ready";
     ready.period = 2;
     ready.probe_timeout = 3;
@@ -88,6 +130,8 @@
     env.PORT = "9892";
     env.OPTAGENT_BIND = "0.0.0.0";
     env.OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892";
+    env.OPTAGENT_VARNISH_PORT = "6095";
+    env.OPTAGENT_SESSION_DIR = "${config.devenv.root}/.devenv/state";
     after = [ "devenv:processes:prepare@completed" ];
     ready.http.get = {
       host = "127.0.0.1";
