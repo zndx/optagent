@@ -1,0 +1,15 @@
+/* Same entry order as Aegir: Kumo tokens, then Tailwind, then Keiretsu. */
+@source "../node_modules/@cloudflare/kumo/dist/**/*.{js,jsx,ts,tsx}";
+@import "@cloudflare/kumo/styles/tailwind";
+@import "tailwindcss";
+@import "./styles/theme-keiretsu.css";
+
+@layer base {
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: Inter, system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background-color: var(--color-kumo-canvas, #090b0e);
+    color: var(--text-color-kumo-default, #d4d8dd);
+  }
+}

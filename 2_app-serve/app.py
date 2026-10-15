@@ -9,6 +9,7 @@ PORT overrides both. CML sets CDSW_APP_PORT.
 """
 
 import html
+import json
 import os
 import sys
 import urllib.parse
@@ -541,45 +542,102 @@ def _page(route: str, sample) -> tuple[int, str, bytes]:
         return 200, "text/html; charset=utf-8", render_tiers().encode("utf-8")
     if route == "/sessions":
         return 200, "text/html; charset=utf-8", render_sessions().encode("utf-8")
-    if route == "/settings":
-        return 200, "text/html; charset=utf-8", render_agentsview("/settings", sample).encode("utf-8")
+    if route == "/settings" or route.startswith("/settings/"):
+        ui = _ui_file(route)
+        if ui is not None:
+            kind = "text/html; charset=utf-8" if ui.suffix == ".html" else _mime(ui.suffix)
+            return 200, kind, ui.read_bytes()
+        if route == "/settings":
+            return 200, "text/html; charset=utf-8", render_agentsview("/settings", sample).encode("utf-8")
     return 404, "text/plain; charset=utf-8", b"not found\n"
+
+
+def _mime(suffix: str) -> str:
+    return {
+        ".js": "text/javascript; charset=utf-8",
+        ".css": "text/css; charset=utf-8",
+        ".svg": "image/svg+xml",
+        ".woff2": "font/woff2",
+    }.get(suffix, "application/octet-stream")
+
+
+_UI_DIST = ROOT / "ui" / "dist"
+
+
+def _settings_payload(enabled: bool) -> bytes:
+    from optagent.config import load_runtime
+
+    runtime = load_runtime()
+    body = {
+        "sample_mode": enabled,
+        "snapshot_s3_uri": runtime.snapshot_s3_uri,
+        "snapshot_endpoint": runtime.snapshot_endpoint,
+        "traces_s3_uri": runtime.traces_s3_uri,
+    }
+    return json.dumps(body).encode("utf-8")
+
+
+def _ui_file(route: str) -> Path | None:
+    if not _UI_DIST.is_dir():
+        return None
+    if route in {"/settings", "/settings/"}:
+        candidate = _UI_DIST / "index.html"
+    elif route.startswith("/settings/"):
+        candidate = (_UI_DIST / route.removeprefix("/settings/")).resolve()
+        if not str(candidate).startswith(str(_UI_DIST.resolve())):
+            return None
+    else:
+        return None
+    return candidate if candidate.is_file() else None
 
 
 def response_for(
     method: str,
     path: str,
     headers: dict | None = None,
+    body: bytes = b"",
 ) -> tuple[int, str, bytes, list[tuple[str, str]]]:
-    if method != "GET":
-        return 405, "text/plain; charset=utf-8", b"method not allowed\n", []
     parsed = urllib.parse.urlparse(path)
     from optagent.config import load_runtime
     from optagent.snapshot import resolve_snapshot
 
     runtime = load_runtime()
     cookie = None if headers is None else headers.get("Cookie")
+    if method == "POST" and parsed.path == "/api/optagent/v1/sample-mode":
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            return 400, "application/json; charset=utf-8", b'{"error":"invalid json"}\n', []
+        enabled = bool(payload.get("enabled"))
+        extra = [(
+            "Set-Cookie",
+            f"optagent-sample-mode={'on' if enabled else 'off'}; Path=/; SameSite=Lax",
+        )]
+        return 200, "application/json; charset=utf-8", _settings_payload(enabled), extra
+    if method != "GET":
+        return 405, "text/plain; charset=utf-8", b"method not allowed\n", []
     enabled, written = _sample_choice(parsed.query, cookie, runtime.sample_mode)
-    sample = resolve_snapshot(runtime.snapshot_s3_uri) if enabled else None
-    status, content_type, body = _page(parsed.path, sample)
     extra: list[tuple[str, str]] = []
     if written is not None:
-        extra.append(
-            (
-                "Set-Cookie",
-                f"optagent-sample-mode={written}; Path=/; SameSite=Lax",
-            )
-        )
-    return status, content_type, body, extra
+        extra.append((
+            "Set-Cookie",
+            f"optagent-sample-mode={written}; Path=/; SameSite=Lax",
+        ))
+    if parsed.path == "/api/optagent/v1/settings":
+        return 200, "application/json; charset=utf-8", _settings_payload(enabled), extra
+    sample = resolve_snapshot(runtime.snapshot_s3_uri) if enabled else None
+    status, content_type, page = _page(parsed.path, sample)
+    return status, content_type, page, extra
 
 
 def make_handler() -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
-        def _send(self, method: str) -> None:
+        def _send(self, method: str, payload: bytes = b"") -> None:
             status, content_type, body, extra = response_for(
                 method,
                 self.path,
                 {key: value for key, value in self.headers.items()},
+                payload,
             )
             self.send_response(status)
             self.send_header("Content-Type", content_type)
@@ -593,7 +651,9 @@ def make_handler() -> type[BaseHTTPRequestHandler]:
             self._send("GET")
 
         def do_POST(self) -> None:
-            self._send("POST")
+            length = int(self.headers.get("Content-Length") or 0)
+            payload = self.rfile.read(length) if length else b""
+            self._send("POST", payload)
 
         def log_message(self, fmt: str, *args) -> None:
             print(fmt % args, flush=True)

@@ -58,7 +58,9 @@ The amp baseline is a SOPS dotenv. `config/amp.env.example` lists the keys. Afte
 
 `signals-snapshot` is a root pointer in the Iceberg sense, the role Project Nessie plays for a metadata file. The document names federated members (Kudu, Iceberg, files, relational) by `metadata-location`. It does not contain the table bytes. A deployment adds a project or a kind the loader has not seen. Unknown kinds are kept. The bundled sample lists Signals, Gaius, Atelier, Ægir, Metabase, and Semantica.
 
-Sample mode is a settings toggle and `OPTAGENT_SAMPLE_MODE`. The AMP turns it on so a walkthrough runs before Impala answers. The snapshot URI is `OPTAGENT_SNAPSHOT_S3_URI`. On a workstation the endpoint is Signals' RustFS at `http://127.0.0.1:9010`. This project does not run that store. In the AMP the endpoint is empty and the URI is AWS S3.
+The settings page is a Vite app on Cloudflare Kumo, the same component set Ægir uses, with the Keiretsu token file loaded before Tailwind. Sample mode is a Kumo `Switch` on that page. It posts to `/api/optagent/v1/sample-mode`. Snapshot membership for a later `hv.Chord` is built by `optagent.viz.chord_tables`. Rendering uses the `viz` extra (HoloViews, Datashader, Bokeh, Panel), the same path as Ægir's lineup chord. The default install does not pull that stack.
+
+Sample mode is `OPTAGENT_SAMPLE_MODE` plus that switch. The AMP turns it on so a walkthrough runs before Impala answers. The snapshot URI is `OPTAGENT_SNAPSHOT_S3_URI`. On a workstation the endpoint is Signals' RustFS at `http://127.0.0.1:9010`. This project does not run that store. In the AMP the endpoint is empty and the URI is AWS S3.
 
 An explicit environment variable wins over the decrypted file.
 

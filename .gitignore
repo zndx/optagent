@@ -9,6 +9,10 @@ devenv.local.yaml
 # pre-commit
 .pre-commit-config.yaml
 
+# UI
+ui/node_modules/
+ui/tsconfig.tsbuildinfo
+
 # Python
 .venv/
 __pycache__/

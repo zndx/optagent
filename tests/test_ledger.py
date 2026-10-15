@@ -57,7 +57,7 @@ def test_agentsview_is_the_local_editable_checkout() -> None:
     replace = (ROOT / "ui" / "go.mod").read_text(encoding="utf-8")
     assert "replace go.kenn.io/agentsview => ../../../rch/oss-agentsview" in replace
     frontend = json.loads((ROOT / "ui" / "package.json").read_text(encoding="utf-8"))
-    assert frontend["dependencies"]["agentsview-frontend"] == "file:../../../rch/oss-agentsview/frontend"
+    assert frontend["dependencies"]["@cloudflare/kumo"].startswith("^2.")
     assert (AGENTS_VIEW / "frontend" / "package.json").is_file()
     remote = (AGENTS_VIEW / ".git" / "config").read_text(encoding="utf-8")
     assert "git@github.com:weathership/oss-agentsview.git" in remote

@@ -99,12 +99,11 @@ def test_home_is_the_empty_agentsview() -> None:
 
 def test_settings_shows_the_trace_archive(monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_TRACES_S3_URI", "s3://agent-archive/laptop/raw")
-    status, _, body, _extra = APP.response_for("GET", "/settings")
-    page = body.decode("utf-8")
+    status, content_type, body, _extra = APP.response_for("GET", "/api/optagent/v1/settings")
+    payload = json.loads(body)
     assert status == 200
-    assert "Trace archive" in page
-    assert "s3://agent-archive/laptop/raw" in page
-    assert "M788.3 465.9" in page
+    assert content_type.startswith("application/json")
+    assert payload["traces_s3_uri"] == "s3://agent-archive/laptop/raw"
 
 
 def test_sample_mode_lists_the_workspace_and_sets_a_cookie() -> None:
@@ -118,14 +117,14 @@ def test_sample_mode_lists_the_workspace_and_sets_a_cookie() -> None:
     assert any(key == "Set-Cookie" and "optagent-sample-mode=on" in value for key, value in extra)
     status, _, settings, _extra = APP.response_for(
         "GET",
-        "/settings",
+        "/api/optagent/v1/settings",
         {"Cookie": "optagent-sample-mode=on"},
     )
-    text = settings.decode("utf-8")
-    assert "Sample mode" in text
-    assert ">On<" in text
-    assert "s3://signals-snapshots/sample/workspace" in text
-    assert "127.0.0.1:9010" in text
+    payload = json.loads(settings)
+    assert status == 200
+    assert payload["sample_mode"] is True
+    assert payload["snapshot_s3_uri"] == "s3://signals-snapshots/sample/workspace"
+    assert payload["snapshot_endpoint"] == "http://127.0.0.1:9010"
 
 
 def test_listen_port(monkeypatch) -> None:
