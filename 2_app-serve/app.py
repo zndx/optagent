@@ -208,8 +208,23 @@ _AGENTS_TABS = (
 )
 
 
-def render_agentsview(active: str) -> str:
-    """Empty AgentsView home. The product lands here when no session is selected."""
+def _sample_choice(query: str, cookie_header: str | None, default: bool) -> tuple[bool, str | None]:
+    """Query wins, then the cookie, then the deployment default."""
+
+    chosen = urllib.parse.parse_qs(query).get("sample", [None])[0]
+    if chosen is not None:
+        enabled = chosen.lower() in {"1", "on", "true"}
+        return enabled, "on" if enabled else "off"
+    if cookie_header:
+        for part in cookie_header.split(";"):
+            key, _, value = part.strip().partition("=")
+            if key == "optagent-sample-mode" and value in {"on", "off"}:
+                return value == "on", None
+    return default, None
+
+
+def render_agentsview(active: str, sample=None) -> str:
+    """AgentsView home. Sample mode lists the workspace snapshot instead of an empty archive."""
 
     tabs = "\n".join(
         f'<a class="tab{" active" if href == active else ""}" href="{href}">{html.escape(label)}</a>'
@@ -227,28 +242,62 @@ def render_agentsview(active: str) -> str:
         f'<article class="metric"><p>{html.escape(label)}</p><strong>{html.escape(value)}</strong></article>'
         for label, value in cards
     )
-    if active == "/":
+    if active == "/" and sample is not None:
+        rows = "\n".join(
+            "<tr>"
+            f"<td>{html.escape(member.project)}</td>"
+            f"<td>{html.escape(member.kind)}</td>"
+            f"<td>{html.escape(member.name)}</td>"
+            "</tr>"
+            for member in sample.members
+        )
+        main = f"""
+        <h1>Sample workspace</h1>
+        <p class="empty">signals-snapshot {html.escape(sample.snapshot_id)}. Sequence {sample.sequence_number}. Pointers only. Impala is not contacted.</p>
+        <table>
+          <thead><tr><th>Project</th><th>Kind</th><th>Name</th></tr></thead>
+          <tbody>{rows}</tbody>
+        </table>
+        """
+        side = "\n".join(
+            f'<p class="side-empty">{html.escape(project)}</p>' for project in sample.projects
+        )
+    elif active == "/":
         main = f"""
         <h1>Sessions</h1>
         <div class="metrics">{card_html}</div>
         <p class="empty">No data for this period</p>
         """
+        side = '<p class="side-empty">No sessions</p>'
     elif active == "/settings":
         from optagent.config import load_runtime
 
-        uri = load_runtime().traces_s3_uri
+        runtime = load_runtime()
+        uri = runtime.traces_s3_uri
         shown = html.escape(uri) if uri else "not set"
+        enabled = sample is not None
+        nxt = "off" if enabled else "on"
+        label = "Turn sample mode off" if enabled else "Turn sample mode on"
+        state = "On" if enabled else "Off"
+        endpoint = html.escape(runtime.snapshot_endpoint) if runtime.snapshot_endpoint else "AWS S3"
+        snapshot_uri = html.escape(runtime.snapshot_s3_uri)
         main = f"""
         <h1>Settings</h1>
+        <article class="metric"><p>Sample mode</p><strong>{state}</strong></article>
+        <p class="empty"><a href="/settings?sample={nxt}">{label}</a></p>
+        <article class="metric"><p>Workspace snapshot</p><strong>{snapshot_uri}</strong></article>
+        <p class="empty">Object storage endpoint {endpoint}. RustFS on the workstation. AWS S3 in the AMP.</p>
         <article class="metric"><p>Trace archive</p><strong>{shown}</strong></article>
-        <p class="empty">Local sessions publish to this s3:// location. The AMP reads the same prefix.</p>
+        <p class="empty">The full session archive stays out of sample mode. Sample mode reads the snapshot pointer.</p>
         """
+        side = '<p class="side-empty">No sessions</p>'
     else:
         title = dict(_AGENTS_TABS).get(active, "Settings")
         main = f"""
         <h1>{html.escape(title)}</h1>
         <p class="empty">No data for this period</p>
         """
+        side = '<p class="side-empty">No sessions</p>'
     gear_on = active == "/settings"
     return f"""<!DOCTYPE html>
 <html lang="en" data-theme="keiretsu" data-mode="dark">
@@ -282,6 +331,8 @@ def render_agentsview(active: str) -> str:
     .metric p {{ margin: 0; color: var(--text-color-kumo-subtle); font-size: 12px; }}
     .metric strong {{ display: block; margin-top: 6px; font-size: 22px; font-weight: 650; }}
     .empty {{ margin-top: 20px; color: var(--text-color-kumo-subtle); }}
+    table {{ width: 100%; border-collapse: collapse; margin-top: 12px; }}
+    th, td {{ text-align: left; padding: 0.4rem 0.5rem; border-bottom: 1px solid var(--color-kumo-line); }}
     .status {{ height: 28px; display: flex; align-items: center; gap: 12px;
       padding: 0 12px; background: var(--color-kumo-base); border-top: 1px solid var(--color-kumo-line);
       color: var(--text-color-kumo-subtle); font-size: 12px; }}
@@ -303,7 +354,7 @@ def render_agentsview(active: str) -> str:
   <div class="frame">
     <aside class="sidebar">
       <h2>Sessions</h2>
-      <p class="side-empty">No sessions</p>
+      {side}
     </aside>
     <main>{main}</main>
   </div>
@@ -463,36 +514,66 @@ def render_sessions() -> str:
     return _shell("/sessions", body)
 
 
-def response_for(method: str, path: str) -> tuple[int, str, bytes]:
-    if method != "GET":
-        return 405, "text/plain; charset=utf-8", b"method not allowed\n"
-    route = urllib.parse.urlparse(path).path
+def _page(route: str, sample) -> tuple[int, str, bytes]:
     if route == "/health":
         return 200, "text/plain; charset=utf-8", b"ok\n"
     if route in ("/", "/index.html"):
-        return 200, "text/html; charset=utf-8", render_agentsview("/").encode("utf-8")
+        return 200, "text/html; charset=utf-8", render_agentsview("/", sample).encode("utf-8")
     if route == "/ledger":
         page = render_page(read_status(status_path(ROOT)), greeting_from_env())
         return 200, "text/html; charset=utf-8", page.encode("utf-8")
     agents_paths = {href for href, _label in _AGENTS_TABS}
     if route in agents_paths:
-        return 200, "text/html; charset=utf-8", render_agentsview(route).encode("utf-8")
+        return 200, "text/html; charset=utf-8", render_agentsview(route, sample).encode("utf-8")
     if route == "/tiers":
         return 200, "text/html; charset=utf-8", render_tiers().encode("utf-8")
     if route == "/sessions":
         return 200, "text/html; charset=utf-8", render_sessions().encode("utf-8")
     if route == "/settings":
-        return 200, "text/html; charset=utf-8", render_agentsview("/settings").encode("utf-8")
+        return 200, "text/html; charset=utf-8", render_agentsview("/settings", sample).encode("utf-8")
     return 404, "text/plain; charset=utf-8", b"not found\n"
+
+
+def response_for(
+    method: str,
+    path: str,
+    headers: dict | None = None,
+) -> tuple[int, str, bytes, list[tuple[str, str]]]:
+    if method != "GET":
+        return 405, "text/plain; charset=utf-8", b"method not allowed\n", []
+    parsed = urllib.parse.urlparse(path)
+    from optagent.config import load_runtime
+    from optagent.snapshot import resolve_snapshot
+
+    runtime = load_runtime()
+    cookie = None if headers is None else headers.get("Cookie")
+    enabled, written = _sample_choice(parsed.query, cookie, runtime.sample_mode)
+    sample = resolve_snapshot(runtime.snapshot_s3_uri) if enabled else None
+    status, content_type, body = _page(parsed.path, sample)
+    extra: list[tuple[str, str]] = []
+    if written is not None:
+        extra.append(
+            (
+                "Set-Cookie",
+                f"optagent-sample-mode={written}; Path=/; SameSite=Lax",
+            )
+        )
+    return status, content_type, body, extra
 
 
 def make_handler() -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def _send(self, method: str) -> None:
-            status, content_type, body = response_for(method, self.path)
+            status, content_type, body, extra = response_for(
+                method,
+                self.path,
+                {key: value for key, value in self.headers.items()},
+            )
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(body)))
+            for key, value in extra:
+                self.send_header(key, value)
             self.end_headers()
             self.wfile.write(body)
 

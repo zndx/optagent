@@ -54,7 +54,11 @@ The amp baseline is a SOPS dotenv. `config/amp.env.example` lists the keys. Afte
 
 `OPTAGENT_CDE_ENABLED` records that Cloudera Data Engineering will join the amp posture later. The flag does not import Spark.
 
-`OPTAGENT_TRACES_S3_URI` is one `s3://` prefix. The local shell publishes agent session objects there, under `.../<machine>/raw/<agent>/...`. The AMP reads that same prefix. The settings gear is Ægir's outlined settings mark, and the page shows the prefix.
+`OPTAGENT_TRACES_S3_URI` is one `s3://` prefix for a full session archive. Sample mode does not use it.
+
+`signals-snapshot` is a root pointer in the Iceberg sense, the role Project Nessie plays for a metadata file. The document names federated members (Kudu, Iceberg, files, relational) by `metadata-location`. It does not contain the table bytes. A deployment adds a project or a kind the loader has not seen. Unknown kinds are kept. The bundled sample lists Signals, Gaius, Atelier, Ægir, Metabase, and Semantica.
+
+Sample mode is a settings toggle and `OPTAGENT_SAMPLE_MODE`. The AMP turns it on so a walkthrough runs before Impala answers. The snapshot URI is `OPTAGENT_SNAPSHOT_S3_URI`. On a workstation the endpoint is Signals' RustFS at `http://127.0.0.1:9010`. This project does not run that store. In the AMP the endpoint is empty and the URI is AWS S3.
 
 An explicit environment variable wins over the decrypted file.
 

@@ -57,6 +57,22 @@ def test_amp_posture_rejects_nosasl(monkeypatch) -> None:
         load_runtime()
 
 
+def test_sample_snapshot_stays_off_the_live_warehouse(monkeypatch) -> None:
+    monkeypatch.delenv("OPTAGENT_POSTURE", raising=False)
+    monkeypatch.delenv("OPTAGENT_SAMPLE_MODE", raising=False)
+    monkeypatch.delenv("OPTAGENT_SNAPSHOT_ENDPOINT", raising=False)
+    local = load_runtime()
+    assert local.sample_mode is False
+    assert local.snapshot_endpoint == "http://127.0.0.1:9010"
+    assert local.snapshot_s3_uri == "s3://signals-snapshots/sample/workspace"
+    monkeypatch.setenv("OPTAGENT_POSTURE", "amp")
+    monkeypatch.setenv("OPTAGENT_SAMPLE_MODE", "true")
+    monkeypatch.delenv("IMPALA_AUTH", raising=False)
+    amp = load_runtime()
+    assert amp.sample_mode is True
+    assert amp.snapshot_endpoint == ""
+
+
 def test_traces_s3_uri_is_shared_by_both_postures(monkeypatch) -> None:
     monkeypatch.delenv("OPTAGENT_POSTURE", raising=False)
     monkeypatch.delenv("OPTAGENT_TRACES_S3_URI", raising=False)
@@ -106,7 +122,7 @@ def test_amp_registration_skips_the_fdw(monkeypatch, capsys) -> None:
 def test_devenv_does_not_carry_the_amp_impala_profile() -> None:
     nix = (ROOT / "devenv.nix").read_text(encoding="utf-8")
     packages = nix.split("packages = with pkgs;", 1)[1].split("];", 1)[0]
-    for name in ("sops", "impyla", "pyspark"):
+    for name in ("sops", "impyla", "pyspark", "rustfs", "minio"):
         assert name not in packages
     assert "bootstrap-secrets" not in nix
     assert "services.postgres" in nix

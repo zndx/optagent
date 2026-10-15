@@ -1,0 +1,57 @@
+{
+  "format": "signals-snapshot",
+  "format-version": 1,
+  "snapshot-id": "00000000-0000-7000-8000-000000000001",
+  "parent-snapshot-id": null,
+  "sequence-number": 1,
+  "timestamp-ms": 1760486400000,
+  "summary": {
+    "operation": "append",
+    "signals-snapshot.sample": "true",
+    "signals-snapshot.note": "Pointers only. Kudu, Iceberg, files, and relational bytes stay where they are."
+  },
+  "members": [
+    {
+      "project": "signals",
+      "kind": "iceberg",
+      "name": "signal",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/signals/signal/metadata/v1.metadata.json"
+    },
+    {
+      "project": "signals",
+      "kind": "kudu",
+      "name": "signal_tier0",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/signals/signal_tier0/table.json"
+    },
+    {
+      "project": "gaius",
+      "kind": "files",
+      "name": "hx",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/gaius/"
+    },
+    {
+      "project": "atelier",
+      "kind": "relational",
+      "name": "catalog",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/atelier/catalog.sql"
+    },
+    {
+      "project": "aegir",
+      "kind": "files",
+      "name": "lineup",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/aegir/"
+    },
+    {
+      "project": "metabase",
+      "kind": "relational",
+      "name": "questions",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/metabase/"
+    },
+    {
+      "project": "semantica",
+      "kind": "files",
+      "name": "ontology",
+      "metadata-location": "s3://signals-snapshots/sample/workspace/semantica/"
+    }
+  ]
+}

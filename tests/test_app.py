@@ -52,7 +52,7 @@ def test_prepare_job_writes_the_snapshot(tmp_path: Path, monkeypatch) -> None:
 def test_page_reports_a_missing_snapshot(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_STATUS_PATH", str(tmp_path / "missing.json"))
     monkeypatch.setenv("OPTAGENT_GREETING", DEFAULT_GREETING)
-    status, content_type, body = APP.response_for("GET", "/ledger")
+    status, content_type, body, _extra = APP.response_for("GET", "/ledger")
     page = body.decode("utf-8")
     assert status == 200
     assert content_type.startswith("text/html")
@@ -65,7 +65,7 @@ def test_page_shows_the_snapshot(tmp_path: Path, monkeypatch) -> None:
     destination = tmp_path / "status.json"
     write_status(destination, "recorded greeting", "0.1.0")
     monkeypatch.setenv("OPTAGENT_STATUS_PATH", str(destination))
-    status, _, body = APP.response_for("GET", "/ledger")
+    status, _, body, _extra = APP.response_for("GET", "/ledger")
     page = body.decode("utf-8")
     assert status == 200
     assert "recorded greeting" in page
@@ -74,7 +74,7 @@ def test_page_shows_the_snapshot(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_home_is_the_empty_agentsview() -> None:
-    status, content_type, body = APP.response_for("GET", "/")
+    status, content_type, body, _extra = APP.response_for("GET", "/")
     page = body.decode("utf-8")
     assert status == 200
     assert content_type.startswith("text/html")
@@ -92,19 +92,40 @@ def test_home_is_the_empty_agentsview() -> None:
     assert "cldr-color-mode" in page
     assert 'aria-label="Switch to light"' in page
     assert "M788.3 465.9" in page
-    status, _, usage = APP.response_for("GET", "/usage")
+    status, _, usage, _extra = APP.response_for("GET", "/usage")
     assert status == 200
     assert "No data for this period" in usage.decode("utf-8")
 
 
 def test_settings_shows_the_trace_archive(monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_TRACES_S3_URI", "s3://agent-archive/laptop/raw")
-    status, _, body = APP.response_for("GET", "/settings")
+    status, _, body, _extra = APP.response_for("GET", "/settings")
     page = body.decode("utf-8")
     assert status == 200
     assert "Trace archive" in page
     assert "s3://agent-archive/laptop/raw" in page
     assert "M788.3 465.9" in page
+
+
+def test_sample_mode_lists_the_workspace_and_sets_a_cookie() -> None:
+    status, _, body, extra = APP.response_for("GET", "/?sample=on")
+    page = body.decode("utf-8")
+    assert status == 200
+    assert "Sample workspace" in page
+    assert "gaius" in page
+    assert "semantica" in page
+    assert "Impala is not contacted" in page
+    assert any(key == "Set-Cookie" and "optagent-sample-mode=on" in value for key, value in extra)
+    status, _, settings, _extra = APP.response_for(
+        "GET",
+        "/settings",
+        {"Cookie": "optagent-sample-mode=on"},
+    )
+    text = settings.decode("utf-8")
+    assert "Sample mode" in text
+    assert ">On<" in text
+    assert "s3://signals-snapshots/sample/workspace" in text
+    assert "127.0.0.1:9010" in text
 
 
 def test_listen_port(monkeypatch) -> None:
@@ -119,7 +140,7 @@ def test_listen_port(monkeypatch) -> None:
 
 
 def test_tiers_and_sessions_pages() -> None:
-    status, content_type, body = APP.response_for("GET", "/tiers")
+    status, content_type, body, _extra = APP.response_for("GET", "/tiers")
     page = body.decode("utf-8")
     assert status == 200
     assert content_type.startswith("text/html")
@@ -127,7 +148,7 @@ def test_tiers_and_sessions_pages() -> None:
     assert "kudu_scan" in page
     assert "span_tier1" in page
     assert "impala_sql" in page
-    status, _, body = APP.response_for("GET", "/sessions")
+    status, _, body, _extra = APP.response_for("GET", "/sessions")
     page = body.decode("utf-8")
     assert status == 200
     assert "weathership/oss-agentsview" in page
@@ -135,11 +156,11 @@ def test_tiers_and_sessions_pages() -> None:
 
 
 def test_health_and_unknown_routes() -> None:
-    status, content_type, body = APP.response_for("GET", "/health")
+    status, content_type, body, _extra = APP.response_for("GET", "/health")
     assert (status, content_type, body) == (200, "text/plain; charset=utf-8", b"ok\n")
-    status, _, body = APP.response_for("GET", "/missing")
+    status, _, body, _extra = APP.response_for("GET", "/missing")
     assert status == 404
     assert body == b"not found\n"
-    status, _, body = APP.response_for("POST", "/")
+    status, _, body, _extra = APP.response_for("POST", "/")
     assert status == 405
     assert body == b"method not allowed\n"

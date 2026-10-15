@@ -28,6 +28,9 @@ class Runtime:
     keytab: str
     cde_enabled: bool
     traces_s3_uri: str
+    sample_mode: bool
+    snapshot_s3_uri: str
+    snapshot_endpoint: str
 
     @property
     def direct_impala(self) -> bool:
@@ -42,6 +45,17 @@ def _flag(value: object) -> bool:
     if isinstance(value, bool):
         return value
     return str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _snapshot_endpoint(posture: str, snapshot) -> str:
+    """RustFS on the workstation. AWS S3 in the AMP when no endpoint is set."""
+
+    configured = _text(snapshot, "endpoint", "")
+    if configured:
+        return configured
+    if posture == "local":
+        return "http://127.0.0.1:9010"
+    return ""
 
 
 def _text(tree, key: str, default: str = "") -> str:
@@ -70,6 +84,7 @@ def load_runtime(path: Path | None = None, *, absorb: bool = True) -> Runtime:
     impala = conf.get("impala", None)
     cde = conf.get("cde", None)
     traces = conf.get("traces", None)
+    snapshot = conf.get("snapshot", None)
     auth = _text(impala, "auth", "kerberos")
     if posture == "amp" and auth != "kerberos":
         raise ValueError("the amp posture accepts only kerberos")
@@ -94,4 +109,7 @@ def load_runtime(path: Path | None = None, *, absorb: bool = True) -> Runtime:
         keytab=_text(impala, "keytab", ""),
         cde_enabled=cde_enabled,
         traces_s3_uri=_text(traces, "s3_uri", ""),
+        sample_mode=_flag(snapshot.get("sample_mode", False) if snapshot is not None else False),
+        snapshot_s3_uri=_text(snapshot, "s3_uri", "s3://signals-snapshots/sample/workspace"),
+        snapshot_endpoint=_snapshot_endpoint(posture, snapshot),
     )

@@ -30,6 +30,18 @@ environment_variables:
     default: "optagent"
     description: "Impala database for the span ledger when posture is amp."
     required: false
+  OPTAGENT_SAMPLE_MODE:
+    default: "true"
+    description: "Read the signals-snapshot sample workspace instead of the live Impala warehouse."
+    required: false
+  OPTAGENT_SNAPSHOT_S3_URI:
+    default: "s3://signals-snapshots/sample/workspace"
+    description: "Object location of the workspace snapshot. RustFS locally, AWS S3 in the AMP."
+    required: false
+  OPTAGENT_SNAPSHOT_ENDPOINT:
+    default: ""
+    description: "S3 API endpoint. Empty in the AMP (AWS). http://127.0.0.1:9010 is Signals RustFS on a workstation."
+    required: false
   OPTAGENT_TRACES_S3_URI:
     default: ""
     description: "s3:// prefix of agent session objects. The local shell publishes there. The AMP reads the same prefix."
