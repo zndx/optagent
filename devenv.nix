@@ -68,7 +68,7 @@
     env.OPTAGENT_ENGINE_PORT = "50851";
     env.OPTAGENT_UI_PORT = "9892";
     env.OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892";
-    ready.exec.command = "python -m optagent.engine_ready";
+    ready.exec = "python -m optagent.engine_ready";
     ready.period = 2;
     ready.probe_timeout = 3;
     ready.failure_threshold = 30;
