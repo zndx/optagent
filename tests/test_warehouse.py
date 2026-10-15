@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_impala_fdw_submodule_points_at_weathership() -> None:
     modules = (ROOT / ".gitmodules").read_text(encoding="utf-8")
     assert "path = components/impala_fdw" in modules
-    assert "url = git@github.com:weathership/impala_fdw.git" in modules
+    assert "url = https://github.com/weathership/impala_fdw.git" in modules
     assert "branch = trunk" in modules
     assert (ROOT / "components/impala_fdw/Makefile").is_file()
     assert (ROOT / "components/impala_fdw/sql/impala_fdw--0.1.1.sql").is_file()

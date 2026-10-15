@@ -1,4 +1,4 @@
 [submodule "components/impala_fdw"]
 	path = components/impala_fdw
-	url = git@github.com:weathership/impala_fdw.git
+	url = https://github.com/weathership/impala_fdw.git
 	branch = trunk
