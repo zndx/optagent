@@ -57,6 +57,14 @@ def test_amp_posture_rejects_nosasl(monkeypatch) -> None:
         load_runtime()
 
 
+def test_traces_s3_uri_is_shared_by_both_postures(monkeypatch) -> None:
+    monkeypatch.delenv("OPTAGENT_POSTURE", raising=False)
+    monkeypatch.delenv("OPTAGENT_TRACES_S3_URI", raising=False)
+    assert load_runtime().traces_s3_uri == ""
+    monkeypatch.setenv("OPTAGENT_TRACES_S3_URI", "s3://agent-archive/laptop/raw")
+    assert load_runtime().traces_s3_uri == "s3://agent-archive/laptop/raw"
+
+
 def test_local_posture_ignores_the_cde_flag(monkeypatch) -> None:
     monkeypatch.delenv("OPTAGENT_POSTURE", raising=False)
     monkeypatch.setenv("OPTAGENT_CDE_ENABLED", "true")

@@ -27,6 +27,7 @@ class Runtime:
     principal: str
     keytab: str
     cde_enabled: bool
+    traces_s3_uri: str
 
     @property
     def direct_impala(self) -> bool:
@@ -68,6 +69,7 @@ def load_runtime(path: Path | None = None, *, absorb: bool = True) -> Runtime:
     fdw = conf.get("fdw", None)
     impala = conf.get("impala", None)
     cde = conf.get("cde", None)
+    traces = conf.get("traces", None)
     auth = _text(impala, "auth", "kerberos")
     if posture == "amp" and auth != "kerberos":
         raise ValueError("the amp posture accepts only kerberos")
@@ -91,4 +93,5 @@ def load_runtime(path: Path | None = None, *, absorb: bool = True) -> Runtime:
         principal=_text(impala, "principal", ""),
         keytab=_text(impala, "keytab", ""),
         cde_enabled=cde_enabled,
+        traces_s3_uri=_text(traces, "s3_uri", ""),
     )

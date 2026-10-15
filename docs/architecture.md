@@ -54,6 +54,8 @@ The amp baseline is a SOPS dotenv. `config/amp.env.example` lists the keys. Afte
 
 `OPTAGENT_CDE_ENABLED` records that Cloudera Data Engineering will join the amp posture later. The flag does not import Spark.
 
+`OPTAGENT_TRACES_S3_URI` is one `s3://` prefix. The local shell publishes agent session objects there, under `.../<machine>/raw/<agent>/...`. The AMP reads that same prefix. The settings gear is Ægir's outlined settings mark, and the page shows the prefix.
+
 An explicit environment variable wins over the decrypted file.
 
 ## Span ledger

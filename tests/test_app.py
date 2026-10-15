@@ -91,9 +91,20 @@ def test_home_is_the_empty_agentsview() -> None:
     assert 'data-theme="keiretsu"' in page
     assert "cldr-color-mode" in page
     assert 'aria-label="Switch to light"' in page
+    assert "M788.3 465.9" in page
     status, _, usage = APP.response_for("GET", "/usage")
     assert status == 200
     assert "No data for this period" in usage.decode("utf-8")
+
+
+def test_settings_shows_the_trace_archive(monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_TRACES_S3_URI", "s3://agent-archive/laptop/raw")
+    status, _, body = APP.response_for("GET", "/settings")
+    page = body.decode("utf-8")
+    assert status == 200
+    assert "Trace archive" in page
+    assert "s3://agent-archive/laptop/raw" in page
+    assert "M788.3 465.9" in page
 
 
 def test_listen_port(monkeypatch) -> None:

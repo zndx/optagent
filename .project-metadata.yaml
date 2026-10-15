@@ -30,6 +30,10 @@ environment_variables:
     default: "optagent"
     description: "Impala database for the span ledger when posture is amp."
     required: false
+  OPTAGENT_TRACES_S3_URI:
+    default: ""
+    description: "s3:// prefix of agent session objects. The local shell publishes there. The AMP reads the same prefix."
+    required: false
   OPTAGENT_CDE_ENABLED:
     default: "false"
     description: "Record that Cloudera Data Engineering will join this AMP later. Does not start Spark."
