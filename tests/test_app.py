@@ -52,7 +52,7 @@ def test_prepare_job_writes_the_snapshot(tmp_path: Path, monkeypatch) -> None:
 def test_page_reports_a_missing_snapshot(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_STATUS_PATH", str(tmp_path / "missing.json"))
     monkeypatch.setenv("OPTAGENT_GREETING", DEFAULT_GREETING)
-    status, content_type, body = APP.response_for("GET", "/")
+    status, content_type, body = APP.response_for("GET", "/ledger")
     page = body.decode("utf-8")
     assert status == 200
     assert content_type.startswith("text/html")
@@ -65,12 +65,28 @@ def test_page_shows_the_snapshot(tmp_path: Path, monkeypatch) -> None:
     destination = tmp_path / "status.json"
     write_status(destination, "recorded greeting", "0.1.0")
     monkeypatch.setenv("OPTAGENT_STATUS_PATH", str(destination))
-    status, _, body = APP.response_for("GET", "/")
+    status, _, body = APP.response_for("GET", "/ledger")
     page = body.decode("utf-8")
     assert status == 200
     assert "recorded greeting" in page
     assert "Prototype version 0.1.0" in page
     assert "Snapshot written at" in page
+
+
+def test_home_is_the_empty_agentsview() -> None:
+    status, content_type, body = APP.response_for("GET", "/")
+    page = body.decode("utf-8")
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert "agentsview" in page
+    assert "No sessions" in page
+    assert "No data for this period" in page
+    assert "Search sessions and messages..." in page
+    assert ">Sessions<" in page
+    assert ">0<" in page
+    status, _, usage = APP.response_for("GET", "/usage")
+    assert status == 200
+    assert "No data for this period" in usage.decode("utf-8")
 
 
 def test_listen_port(monkeypatch) -> None:

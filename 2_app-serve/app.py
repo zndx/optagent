@@ -50,6 +50,115 @@ def app_port() -> int:
     return int(os.environ.get("PORT") or os.environ.get("CDSW_APP_PORT") or "8123")
 
 
+_AGENTS_TABS = (
+    ("/", "Sessions"),
+    ("/usage", "Usage"),
+    ("/activity", "Activity"),
+    ("/trends", "Trends"),
+    ("/recall", "Recall"),
+    ("/pinned", "Pinned"),
+    ("/quality", "Quality"),
+    ("/trash", "Trash"),
+    ("/recent-edits", "Recent Edits"),
+    ("/data", "Data"),
+)
+
+
+def render_agentsview(active: str) -> str:
+    """Empty AgentsView home. The product lands here when no session is selected."""
+
+    tabs = "\n".join(
+        f'<a class="tab{" active" if href == active else ""}" href="{href}">{html.escape(label)}</a>'
+        for href, label in _AGENTS_TABS
+    )
+    cards = (
+        ("Sessions", "0"),
+        ("Messages", "0"),
+        ("Projects", "0"),
+        ("Active days", "0"),
+        ("Messages / session", "–"),
+        ("Concentration", "0.0%"),
+    )
+    card_html = "\n".join(
+        f'<article class="metric"><p>{html.escape(label)}</p><strong>{html.escape(value)}</strong></article>'
+        for label, value in cards
+    )
+    if active == "/":
+        main = f"""
+        <h1>Sessions</h1>
+        <div class="metrics">{card_html}</div>
+        <p class="empty">No data for this period</p>
+        """
+    else:
+        title = dict(_AGENTS_TABS).get(active, "Sessions")
+        main = f"""
+        <h1>{html.escape(title)}</h1>
+        <p class="empty">No data for this period</p>
+        """
+    return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>agentsview</title>
+  <style>
+    * {{ box-sizing: border-box; }}
+    html, body {{ margin: 0; height: 100%; background: #f4f5f7; color: #1c2430;
+      font-family: system-ui, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }}
+    body {{ display: flex; flex-direction: column; min-height: 100%; }}
+    .top {{ display: flex; align-items: center; gap: 12px; min-height: 52px;
+      padding: 0 12px; background: #fff; border-bottom: 1px solid #e3e6eb; }}
+    .brand {{ font-weight: 650; letter-spacing: -0.02em; color: #111827; text-decoration: none; }}
+    .tabs {{ display: flex; gap: 4px; overflow-x: auto; }}
+    .tab {{ color: #4b5563; text-decoration: none; padding: 6px 8px; border-radius: 6px;
+      white-space: nowrap; font-size: 14px; }}
+    .tab.active {{ background: #eef2ff; color: #1d4ed8; }}
+    .search {{ margin-left: auto; border: 1px solid #e3e6eb; border-radius: 6px;
+      padding: 6px 8px; min-width: 12rem; color: #6b7280; background: #fafafa; font-size: 13px; }}
+    .frame {{ display: flex; flex: 1; min-height: 0; }}
+    .sidebar {{ width: 280px; background: #fff; border-right: 1px solid #e3e6eb; padding: 12px; }}
+    .sidebar h2 {{ font-size: 13px; margin: 0 0 8px; color: #6b7280; font-weight: 600; }}
+    .side-empty {{ color: #6b7280; font-size: 14px; padding: 12px 0; }}
+    main {{ flex: 1; padding: 20px; overflow: auto; }}
+    main h1 {{ font-size: 20px; font-weight: 650; margin: 0 0 16px; }}
+    .metrics {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }}
+    .metric {{ background: #fff; border: 1px solid #e3e6eb; border-radius: 8px; padding: 12px; }}
+    .metric p {{ margin: 0; color: #6b7280; font-size: 12px; }}
+    .metric strong {{ display: block; margin-top: 6px; font-size: 22px; font-weight: 650; }}
+    .empty {{ margin-top: 20px; color: #6b7280; }}
+    .status {{ height: 28px; display: flex; align-items: center; gap: 12px;
+      padding: 0 12px; background: #fff; border-top: 1px solid #e3e6eb;
+      color: #6b7280; font-size: 12px; }}
+    .status a {{ color: #1d4ed8; }}
+    @media (max-width: 720px) {{
+      .search {{ display: none; }}
+      .frame {{ flex-direction: column; }}
+      .sidebar {{ width: auto; border-right: 0; border-bottom: 1px solid #e3e6eb; }}
+    }}
+  </style>
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="/">agentsview</a>
+    <nav class="tabs">{tabs}</nav>
+    <div class="search" role="search">Search sessions and messages...</div>
+  </header>
+  <div class="frame">
+    <aside class="sidebar">
+      <h2>Sessions</h2>
+      <p class="side-empty">No sessions</p>
+    </aside>
+    <main>{main}</main>
+  </div>
+  <footer class="status">
+    <span>No sessions</span>
+    <a href="/ledger">Ledger</a>
+  </footer>
+</body>
+</html>
+"""
+
+
 def _shell(active: str, body: str) -> str:
     def link(href: str, label: str) -> str:
         cls = " active" if active == href else ""
@@ -146,7 +255,7 @@ def render_page(status: dict | None, greeting: str) -> str:
       {warehouse_html}
     </div>
     """
-    return _shell("/", body)
+    return _shell("/ledger", body)
 
 
 def render_tiers() -> str:
@@ -199,8 +308,13 @@ def response_for(method: str, path: str) -> tuple[int, str, bytes]:
     if route == "/health":
         return 200, "text/plain; charset=utf-8", b"ok\n"
     if route in ("/", "/index.html"):
+        return 200, "text/html; charset=utf-8", render_agentsview("/").encode("utf-8")
+    if route == "/ledger":
         page = render_page(read_status(status_path(ROOT)), greeting_from_env())
         return 200, "text/html; charset=utf-8", page.encode("utf-8")
+    agents_paths = {href for href, _label in _AGENTS_TABS}
+    if route in agents_paths:
+        return 200, "text/html; charset=utf-8", render_agentsview(route).encode("utf-8")
     if route == "/tiers":
         return 200, "text/html; charset=utf-8", render_tiers().encode("utf-8")
     if route == "/sessions":
