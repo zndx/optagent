@@ -20,7 +20,7 @@
   services.postgres = {
     enable = true;
     package = pkgs.postgresql_16;
-    port = 5466;
+    port = 5599;
     listen_addresses = "127.0.0.1";
     initialDatabases = [{ name = "optagent"; }];
   };
@@ -60,6 +60,19 @@
     uv.sync.enable = true;
     uv.sync.extras = [ "dev" ];
     venv.enable = true;
+  };
+
+  # Lattice engine. Status on :50851. Does not host a model.
+  processes.engine = {
+    exec = "python -m optagent.engine";
+    env.OPTAGENT_ENGINE_PORT = "50851";
+    env.OPTAGENT_UI_PORT = "9892";
+    env.OPTAGENT_PRIMARY_UI = "http://127.0.0.1:9892";
+    ready.exec.command = "python -m optagent.engine_ready";
+    ready.period = 2;
+    ready.probe_timeout = 3;
+    ready.failure_threshold = 30;
+    ready.timeout = 90;
   };
 
   # One-shot: same script as the CML "Prepare project" job.

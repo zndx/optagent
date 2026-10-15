@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 SO_SRC="${IMPALA_FDW_SO:-$ROOT/components/impala_fdw/impala_fdw.so}"
 EXT_DIR="${IMPALA_FDW_EXT_DIR:-$ROOT/.devenv/pg-ext}"
 PGHOST="${OPTAGENT_PGHOST:-127.0.0.1}"
-PGPORT="${OPTAGENT_PGPORT:-5466}"
+PGPORT="${OPTAGENT_PGPORT:-5599}"
 PGDATABASE="${OPTAGENT_PGDATABASE:-optagent}"
 
 if [[ ! -f "$SO_SRC" ]]; then

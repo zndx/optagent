@@ -9,6 +9,9 @@ authors = [{ name = "zndx" }]
 keywords = ["cloudera", "amp", "cml", "template", "devenv"]
 requires-python = ">=3.12"
 dependencies = [
+  "grpcio>=1.71",
+  "grpcio-reflection>=1.71",
+  "protobuf>=6.31.1",
   "psycopg[binary]>=3.2",
   "pyhocon>=0.3.61",
 ]

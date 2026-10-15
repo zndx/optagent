@@ -22,7 +22,7 @@ Project template for a Cloudera Machine Learning AMP. Copy it when a new prototy
 
 ## Overview
 
-Optagent launches as an Applied ML Prototype. The workbench installs `requirements.txt`, registers `impala_fdw` when the worker can build it, writes a status snapshot, and serves that snapshot. On a workstation, devenv runs PostgreSQL 16 on port 5466 and the same scripts. The shell is Python 3.12 with uv. CML does not read `devenv.nix`.
+Optagent launches as an Applied ML Prototype. The workbench installs `requirements.txt`, registers `impala_fdw` when the worker can build it, writes a status snapshot, and serves that snapshot. On a workstation, devenv runs PostgreSQL 16 on port 5599 and the same scripts. The shell is Python 3.12 with uv. CML does not read `devenv.nix`.
 
 Kudu and Iceberg stay where they are. Postgres foreign tables reach them through Impala. Kudu scans and writes use `kudu_scan`. Iceberg tables and UNION views use `impala_sql`. The extension is [`weathership/impala_fdw`](https://github.com/weathership/impala_fdw), the same repository Gaius and Signals build. Product auth is Kerberos.
 

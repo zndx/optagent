@@ -103,7 +103,9 @@ def test_devenv_is_the_local_runtime() -> None:
     assert "python -m pytest" in nix
     assert "services.postgres" in nix
     assert "package = pkgs.postgresql_16" in nix
-    assert "port = 5466" in nix
+    assert "port = 5599" in nix
+    assert 'env.OPTAGENT_ENGINE_PORT = "50851"' in nix
+    assert "processes.engine" in nix
     assert 'tasks."impala-fdw:build"' in nix
     assert 'tasks."impala-fdw:install"' in nix
     assert "pkgs.thrift" in nix

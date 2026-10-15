@@ -14,7 +14,7 @@ import os
 import re
 from pathlib import Path
 
-DEFAULT_DB_URL = "postgres://127.0.0.1:5466/optagent"
+DEFAULT_DB_URL = "postgres://127.0.0.1:5599/optagent"
 SERVER_NAME = "impala_kudu_srv"
 _IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 

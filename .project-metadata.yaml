@@ -59,8 +59,8 @@ environment_variables:
     description: "Project-relative path where the prepare job writes the status snapshot."
     required: false
   OPTAGENT_DB_URL:
-    default: "postgres://127.0.0.1:5466/optagent"
-    description: "PostgreSQL that loads impala_fdw. Devenv listens on port 5466."
+    default: "postgres://127.0.0.1:5599/optagent"
+    description: "PostgreSQL that loads impala_fdw. Devenv listens on port 5599."
     required: false
   IMPALA_HS2_HOST:
     default: ""

@@ -29,7 +29,7 @@ def test_local_posture_stays_on_the_fdw(monkeypatch) -> None:
     assert runtime.posture == "local"
     assert runtime.uses_fdw
     assert not runtime.direct_impala
-    assert runtime.database_url == "postgres://127.0.0.1:5466/optagent"
+    assert runtime.database_url == "postgres://127.0.0.1:5599/optagent"
     assert runtime.cde_enabled is False
 
 

@@ -12,7 +12,7 @@ flowchart TD
 
 | Piece | Role |
 | --- | --- |
-| `devenv.nix` | Local Python 3.12 environment and PostgreSQL 16 on port 5466. `languages.python` with uv syncs the project, including the `dev` extra. `processes.prepare` is the one-shot job. `processes.app` serves the page on lattice port 9892 after that job finishes |
+| `devenv.nix` | Local Python 3.12 environment and PostgreSQL 16 on port 5599. `languages.python` with uv syncs the project, including the `dev` extra. `processes.prepare` is the one-shot job. `processes.app` serves the page on lattice port 9892 after that job finishes |
 | `components/impala_fdw` | `weathership/impala_fdw` `trunk`. Native PostgreSQL extension. Kudu scans and writes use `kudu_scan`. Iceberg tables and Impala UNION views use `impala_sql` |
 | `0_session-install-dependencies` | CML job that installs `requirements.txt`. The directory keeps the community template name. The task type is `create_job` / `run_job`. PBJ runtimes fail AMP setup steps that run as sessions |
 | `1_job-prepare-project` | Writes the status snapshot. Imports the model from `src/` |
@@ -31,7 +31,7 @@ A finished install job remains in the project. Run it again from the Jobs tab wh
 
 ## Warehouse
 
-Gaius (`:5444`) and Signals (`:5455`) query Kudu and Iceberg through `impala_fdw` on native PostgreSQL. Optagent uses the same extension on its own postmaster, port **5466**, database `optagent`. The submodule is `git@github.com:weathership/impala_fdw.git`, branch `trunk`.
+Gaius (`:5444`) and Signals (`:5455`) query Kudu and Iceberg through `impala_fdw` on native PostgreSQL. Optagent uses the same extension on its own postmaster, port **5599**, database `optagent`. The submodule is `git@github.com:weathership/impala_fdw.git`, branch `trunk`.
 
 ElectricSQL PGlite, the WASM build Atelier starts in a workbench, cannot load this PGXS `.so`. The AMP job `scripts/warehouse/register_impala_fdw.py` builds and registers the extension when PostgreSQL headers and Thrift are on the worker. A stock PBJ image has neither, so that job records the skip and the launch continues. Locally:
 
@@ -48,7 +48,7 @@ Foreign tables are not created by the template. A Kudu table uses `access 'kudu_
 
 ## Posture
 
-`config/base.conf` is the HOCON source. `posture = local` is the devenv default: Postgres on port 5466 and `impala_fdw`. `posture = amp` is the workbench: Impala HS2 directly, no FDW registration, no local Postgres. `.project-metadata.yaml` sets `OPTAGENT_POSTURE=amp`. A devenv shell does not.
+`config/base.conf` is the HOCON source. `posture = local` is the devenv default: Postgres on port 5599 and `impala_fdw`. `posture = amp` is the workbench: Impala HS2 directly, no FDW registration, no local Postgres. `.project-metadata.yaml` sets `OPTAGENT_POSTURE=amp`. A devenv shell does not.
 
 The amp baseline is a SOPS dotenv. `config/amp.env.example` lists the keys. After `.sops.yaml` names this project's age recipient, `sops` writes `.env.cai.enc`. `scripts/bootstrap-secrets.sh` decrypts it when `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE` is set. The devenv shell does not call that script, and it does not install `sops`, Impala, or Spark.
 
@@ -90,7 +90,7 @@ The session browser source is the local agentsview checkout `../../rch/oss-agent
 
 | Variable | Default | Used for |
 | --- | --- | --- |
-| `OPTAGENT_DB_URL` | `postgres://127.0.0.1:5466/optagent` | Postgres that loads `impala_fdw` |
+| `OPTAGENT_DB_URL` | `postgres://127.0.0.1:5599/optagent` | Postgres that loads `impala_fdw` |
 | `IMPALA_HS2_HOST` | empty | Impala HS2 host. Empty skips `CREATE SERVER` |
 | `IMPALA_HS2_PORT` | `21050` | Impala HS2 port |
 | `KUDU_MASTERS` | empty | Kudu masters. Empty uses `IMPALA_HS2_HOST:7051` |
@@ -102,7 +102,9 @@ The session browser source is the local agentsview checkout `../../rch/oss-agent
 | `PORT` | `9892` when unset | Listen port. The devenv process sets `9892` |
 | `OPTAGENT_PRIMARY_UI` | `http://127.0.0.1:9892` | Lattice URL for this UI. Signals is `:9889`. Gaius is `:9890` |
 
-`devenv up` binds that URL on this machine. The federation waffle lists a peer only after that peer answers `Engine/Status` with a primary surface and a seed includes the engine in `PEERS`. Optagent does not serve Status yet, so Signals will not show it in the waffle until that join exists. Postgres for the local FDW stays on `:5466`, which is outside the published Postgres lattice (`:5444` Gaius, `:5455` Signals, `:5533` Atelier, `:5555` Ægir, `:5566` Synth, `:5588` taken). Warehouse queries in the amp posture still go to Signals Impala, not to this postmaster.
+`devenv up` binds the UI at `http://127.0.0.1:9892` and the lattice engine at `:50851`. `optagent.service` is a `signals.target` member: `PartOf=` and `WantedBy=signals.target`, `After=signals-ready.service`. Start and stop run `scripts/systemd_start.sh` and `scripts/systemd_stop.sh`, which only touch this checkout. Postgres is `:5599`, the next free slot after Semantica `:5588`. It does not bind Signals `:5455` or RustFS `:9010`.
+
+`Engine/Status` reports `project=optagent`, no hosted model, and a primary surface at `:9892` whose `healthy` flag follows whether that port accepts a connection. Server reflection is enabled. Signals lists the UI in the waffle after this engine is in some seed's `PEERS` (the contract entry is `engine_grpc_lattice.optagent = 50851`). The amp posture still queries Signals Impala rather than this postmaster.
 | `CDSW_APP_PORT` | | Listen port inside CML, used when `PORT` is unset |
 | `CDSW_PROJECT_DIR`, `ML_PROJECT_DIR` | | Repository root inside CML |
 

@@ -100,7 +100,7 @@ def load_runtime(path: Path | None = None, *, absorb: bool = True) -> Runtime:
     return Runtime(
         posture=posture,
         engine=engine,
-        database_url=_text(fdw, "database_url", "postgres://127.0.0.1:5466/optagent"),
+        database_url=_text(fdw, "database_url", "postgres://127.0.0.1:5599/optagent"),
         impala_host=_text(impala, "host", ""),
         impala_port=int(port_raw),
         impala_database=_text(impala, "database", "optagent"),
