@@ -47,6 +47,15 @@ def can_build(root: Path) -> bool:
 
 def main() -> None:
     root = project_root()
+    sys.path.insert(0, str(root / "src"))
+    from optagent.config import load_runtime
+
+    if load_runtime().direct_impala:
+        print(
+            "AMP posture talks to Impala directly. Skipped FDW registration.",
+            flush=True,
+        )
+        return
     so = root / "components" / "impala_fdw" / "impala_fdw.so"
     if not so.is_file() and not can_build(root):
         print(

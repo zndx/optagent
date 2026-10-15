@@ -8,7 +8,10 @@ license-files = ["LICENSE"]
 authors = [{ name = "zndx" }]
 keywords = ["cloudera", "amp", "cml", "template", "devenv"]
 requires-python = ">=3.12"
-dependencies = ["psycopg[binary]>=3.2"]
+dependencies = [
+  "psycopg[binary]>=3.2",
+  "pyhocon>=0.3.61",
+]
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]

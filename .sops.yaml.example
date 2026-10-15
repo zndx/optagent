@@ -1,0 +1,6 @@
+# Copy to .sops.yaml and replace the age recipient with this project's
+# public key before the first encrypt. The private key stays out of git.
+# On the workbench, set SOPS_AGE_KEY or SOPS_AGE_KEY_FILE.
+creation_rules:
+  - path_regex: '\.env\.cai'
+    age: age1REPLACE_WITH_PROJECT_RECIPIENT

@@ -46,6 +46,16 @@ devenv tasks run impala-fdw:install
 
 Foreign tables are not created by the template. A Kudu table uses `access 'kudu_scan'`. An Iceberg table or a UNION view uses `access 'impala_sql'`.
 
+## Posture
+
+`config/base.conf` is the HOCON source. `posture = local` is the devenv default: Postgres on port 5466 and `impala_fdw`. `posture = amp` is the workbench: Impala HS2 directly, no FDW registration, no local Postgres. `.project-metadata.yaml` sets `OPTAGENT_POSTURE=amp`. A devenv shell does not.
+
+The amp baseline is a SOPS dotenv. `config/amp.env.example` lists the keys. After `.sops.yaml` names this project's age recipient, `sops` writes `.env.cai.enc`. `scripts/bootstrap-secrets.sh` decrypts it when `SOPS_AGE_KEY` or `SOPS_AGE_KEY_FILE` is set. The devenv shell does not call that script, and it does not install `sops`, Impala, or Spark.
+
+`OPTAGENT_CDE_ENABLED` records that Cloudera Data Engineering will join the amp posture later. The flag does not import Spark.
+
+An explicit environment variable wins over the decrypted file.
+
 ## Span ledger
 
 `span` is the relation readers query. It is not a copy of a Signals series and it is not Gaius `cognition_thoughts`.

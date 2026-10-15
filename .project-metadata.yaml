@@ -15,9 +15,25 @@ description: >
 author: zndx
 specification_version: "1.0"
 prototype_version: "0.1.0"
-date: "2026-10-14"
+date: "2026-10-15"
 
 environment_variables:
+  OPTAGENT_POSTURE:
+    default: "amp"
+    description: "amp talks to Impala HS2 only. A local devenv shell leaves this unset and stays on the FDW."
+    required: false
+  IMPALA_AUTH:
+    default: "kerberos"
+    description: "Auth for the direct Impala posture. kerberos is the only accepted value."
+    required: false
+  IMPALA_DATABASE:
+    default: "optagent"
+    description: "Impala database for the span ledger when posture is amp."
+    required: false
+  OPTAGENT_CDE_ENABLED:
+    default: "false"
+    description: "Record that Cloudera Data Engineering will join this AMP later. Does not start Spark."
+    required: false
   OPTAGENT_GREETING:
     default: "Hello from the Optagent AMP template."
     description: "Greeting the prepare job records and the application shows."
@@ -91,7 +107,7 @@ tasks:
     kernel: python3
     cpu: 1
     memory: 4
-    short_summary: Create the job that registers impala_fdw on PostgreSQL 16.
+    short_summary: Create the job that registers impala_fdw. The amp posture skips it.
     environment_variables:
       TASK_TYPE: CREATE/RUN_JOB
 

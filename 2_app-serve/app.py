@@ -41,6 +41,7 @@ def project_root() -> Path:
 ROOT = project_root()
 sys.path.insert(0, str(ROOT / "src"))
 
+from optagent.config import load_runtime
 from optagent.ledger import DATABASE, SURFACE, TIER0, TIER1
 from optagent.status import greeting_from_env, read_status, status_path
 
@@ -117,10 +118,12 @@ def render_page(status: dict | None, greeting: str) -> str:
             "<p>Kudu foreign tables use access kudu_scan. "
             "Iceberg tables and UNION views use access impala_sql.</p>"
         )
+    runtime = load_runtime()
     body = f"""
     <h1>Ledger</h1>
     <p>{html.escape(shown)}</p>
     {version_line}
+    <p>Posture {html.escape(runtime.posture)}. Engine {html.escape(runtime.engine)}.</p>
     <div class="card">
       <p><code>{DATABASE}.{SURFACE}</code> is the transparent surface.
       Hot hours are <code>{TIER0}</code> on Kudu. Settled hours are <code>{TIER1}</code> on Iceberg.

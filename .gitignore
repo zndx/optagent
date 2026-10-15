@@ -20,3 +20,6 @@ __pycache__/
 
 # Written by the prepare job
 assets/data/*.json
+
+# Decrypted AMP baseline. The ciphertext .env.cai.enc is the committed form.
+.env.cai

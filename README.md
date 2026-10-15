@@ -28,6 +28,8 @@ Kudu and Iceberg stay where they are. Postgres foreign tables reach them through
 
 The ledger relation is `optagent.span`. Hot hours are `span_tier0` on Kudu. Settled hours are `span_tier1` on Iceberg. The view masks a tier1 hour that is still in tier0. Session inspection starts from the local [agentsview](https://github.com/weathership/oss-agentsview) checkout at `../../rch/oss-agentsview`, wired as an editable replace in `go.work` and `ui/go.mod`.
 
+Local devenv stays on the FDW. An AMP sets `OPTAGENT_POSTURE=amp` and talks to Impala HS2 only. The host, principal, and keytab for that posture live in a SOPS file, `.env.cai.enc`, decrypted on the workbench. `config/base.conf` is the HOCON source. Spark is not a dependency. `OPTAGENT_CDE_ENABLED` only records that Cloudera Data Engineering joins later.
+
 ```mermaid
 flowchart LR
   install["Install dependencies"] --> prepare["Prepare project"]
