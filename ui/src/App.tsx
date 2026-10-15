@@ -37,7 +37,6 @@ type Workspace = {
 };
 
 const NAV = [
-  { href: "/", label: "Landing" },
   { href: "/sessions", label: "Sessions" },
   { href: "/summary", label: "Summary" },
   { href: "/terminal", label: "Terminal" },

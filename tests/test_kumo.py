@@ -19,8 +19,10 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "agentsview" not in source
     assert 'label="Dark theme"' in source
     assert "Logo brand pack" in source
-    for label in ("Landing", "Sessions", "Summary", "Terminal", "Settings"):
+    for label in ("Sessions", "Summary", "Terminal", "Settings"):
         assert f'label: "{label}"' in source
+    assert 'label: "Landing"' not in source
+    assert 'className="brand" href="/"' in source
     assert "Arize Phoenix" in source
     assert "sum-rail" in source
     assert "sum-panel" in source
