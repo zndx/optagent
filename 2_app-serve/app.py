@@ -318,7 +318,7 @@ def render_agentsview(active: str, sample=None) -> str:
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>agentsview</title>
+  <title>OptAgent</title>
   <style>
     * {{ box-sizing: border-box; }}
     {_chrome_css()}
@@ -360,7 +360,7 @@ def render_agentsview(active: str, sample=None) -> str:
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="/">agentsview</a>
+    <a class="brand" href="/">OptAgent</a>
     <nav class="tabs">{tabs}</nav>
     <div class="search" role="search">Search sessions and messages...</div>
     {_chrome_controls(gear_on)}
@@ -586,10 +586,14 @@ def _ui_file(route: str) -> Path | None:
         return None
     if route in {"/", "/index.html", "/settings", "/settings/"}:
         candidate = _UI_DIST / "index.html"
-    elif route.startswith("/assets/"):
+    elif route.startswith("/assets/") or route.startswith("/brand/"):
         candidate = (_UI_DIST / route.lstrip("/")).resolve()
         if not str(candidate).startswith(str(_UI_DIST.resolve())):
             return None
+        if not candidate.is_file() and route.startswith("/brand/"):
+            public = (ROOT / "ui" / "public" / route.removeprefix("/")).resolve()
+            if str(public).startswith(str((ROOT / "ui" / "public").resolve())) and public.is_file():
+                return public
     else:
         return None
     return candidate if candidate.is_file() else None
@@ -648,17 +652,31 @@ def response_for(
     body: bytes = b"",
 ) -> tuple[int, str, bytes, list[tuple[str, str]]]:
     parsed = urllib.parse.urlparse(path)
+    from optagent.brand import brand_view, save_brand_id
     from optagent.config import load_runtime
-    from optagent.web_session import effective_sample_mode, set_sample_mode
+    from optagent.web_session import effective_sample_mode, set_color_mode, set_sample_mode
 
     runtime = load_runtime()
     session, extra = _open_session(headers)
-    if method == "POST" and parsed.path == "/api/optagent/v1/sample-mode":
+    if method == "POST" and parsed.path in {
+        "/api/optagent/v1/sample-mode",
+        "/api/optagent/v1/brand",
+        "/api/optagent/v1/theme",
+    }:
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
         except json.JSONDecodeError:
             return 400, "application/json; charset=utf-8", b'{"error":"invalid json"}\n', extra
-        session = set_sample_mode(session["id"], bool(payload.get("enabled")))
+        try:
+            if parsed.path.endswith("/sample-mode"):
+                session = set_sample_mode(session["id"], bool(payload.get("enabled")))
+            elif parsed.path.endswith("/brand"):
+                save_brand_id(str(payload.get("brand_id") or ""))
+            else:
+                session = set_color_mode(session["id"], str(payload.get("mode") or ""))
+        except ValueError as exc:
+            message = json.dumps({"error": str(exc)}).encode()
+            return 400, "application/json; charset=utf-8", message, extra
     elif method != "GET":
         return 405, "text/plain; charset=utf-8", b"method not allowed\n", extra
     enabled, source = effective_sample_mode(session, runtime.sample_mode)
@@ -673,12 +691,16 @@ def response_for(
         "snapshot_endpoint": runtime.snapshot_endpoint,
         "traces_s3_uri": runtime.traces_s3_uri,
         "snapshot": document,
+        "color_mode": session.get("color_mode") or "dark",
+        **brand_view(runtime.brand_id),
     }
     encoded = json.dumps(view).encode("utf-8")
     if parsed.path in {
         "/api/optagent/v1/settings",
         "/api/optagent/v1/workspace",
         "/api/optagent/v1/sample-mode",
+        "/api/optagent/v1/brand",
+        "/api/optagent/v1/theme",
     }:
         return 200, "application/json; charset=utf-8", encoded, extra
     sample = None

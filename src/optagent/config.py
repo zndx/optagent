@@ -31,6 +31,7 @@ class Runtime:
     sample_mode: bool
     snapshot_s3_uri: str
     snapshot_endpoint: str
+    brand_id: str
 
     @property
     def direct_impala(self) -> bool:
@@ -112,4 +113,5 @@ def load_runtime(path: Path | None = None, *, absorb: bool = True) -> Runtime:
         sample_mode=_flag(snapshot.get("sample_mode", False) if snapshot is not None else False),
         snapshot_s3_uri=_text(snapshot, "s3_uri", "s3://signals-snapshots/sample/workspace"),
         snapshot_endpoint=_snapshot_endpoint(posture, snapshot),
+        brand_id=_text(conf.get("ui", None), "brand_id", "weathership"),
     )

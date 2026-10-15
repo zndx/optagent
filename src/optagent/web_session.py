@@ -62,7 +62,7 @@ def ensure(sid: str | None) -> tuple[dict, bool]:
         if sid and sid in data:
             return data[sid], False
         fresh = uuid.uuid4().hex
-        session = {"id": fresh, "sample_mode": None}
+        session = {"id": fresh, "sample_mode": None, "color_mode": None}
         data[fresh] = session
         _write(data)
         return session, True
@@ -74,6 +74,19 @@ def set_sample_mode(sid: str, enabled: bool) -> dict:
         session = data.get(sid) or {"id": sid, "sample_mode": None}
         session["id"] = sid
         session["sample_mode"] = bool(enabled)
+        data[sid] = session
+        _write(data)
+        return session
+
+
+def set_color_mode(sid: str, mode: str) -> dict:
+    if mode not in {"dark", "light"}:
+        raise ValueError("color mode must be dark or light")
+    with _LOCK:
+        data = _read()
+        session = data.get(sid) or {"id": sid, "sample_mode": None, "color_mode": None}
+        session["id"] = sid
+        session["color_mode"] = mode
         data[sid] = session
         _write(data)
         return session

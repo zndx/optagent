@@ -15,6 +15,10 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert 'from "@cloudflare/kumo"' in source
     assert "<Switch" in source
     assert 'label="Sample mode"' in source
+    assert "OptAgent" in source
+    assert "agentsview" not in source
+    assert 'label="Dark theme"' in source
+    assert "Logo brand pack" in source
     css = (ROOT / "ui" / "src" / "index.css").read_text(encoding="utf-8")
     assert "@cloudflare/kumo/styles/tailwind" in css
     assert "theme-keiretsu.css" in css
@@ -62,3 +66,38 @@ def test_sample_mode_api_round_trip() -> None:
     assert loaded["sample_mode"] is True
     assert loaded["sample_mode_source"] == "session"
     assert loaded["snapshot"]["members"]
+
+
+def test_brand_and_theme_are_settings(monkeypatch, tmp_path) -> None:
+    import importlib.util
+
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    spec = importlib.util.spec_from_file_location(
+        "optagent_app_brand",
+        ROOT / "2_app-serve" / "app.py",
+    )
+    assert spec is not None and spec.loader is not None
+    app = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(app)
+    status, _, body, extra = app.response_for("GET", "/api/optagent/v1/settings")
+    payload = json.loads(body)
+    assert payload["brand_id"] == "weathership"
+    assert [item["id"] for item in payload["brands"]] == ["weathership", "cloudera", "custom"]
+    cookie = next(value for key, value in extra if key == "Set-Cookie").split(";", 1)[0]
+    status, _, body, _extra = app.response_for(
+        "POST",
+        "/api/optagent/v1/brand",
+        {"Cookie": cookie},
+        b'{"brand_id": "cloudera"}',
+    )
+    assert json.loads(body)["brand_id"] == "cloudera"
+    status, _, body, _extra = app.response_for(
+        "POST",
+        "/api/optagent/v1/theme",
+        {"Cookie": cookie},
+        b'{"mode": "light"}',
+    )
+    assert json.loads(body)["color_mode"] == "light"
+    status, _, body, _extra = app.response_for("GET", "/api/optagent/v1/settings", {"Cookie": cookie})
+    assert json.loads(body)["color_mode"] == "light"
+    assert json.loads(body)["brand_id"] == "cloudera"
