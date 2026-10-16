@@ -117,6 +117,81 @@ def load_member_spans(root: Path, members: list[dict]) -> list[dict]:
     return spans
 
 
+def _attribute(key: str, value: object):
+    from opentelemetry.proto.common.v1.common_pb2 import KeyValue
+
+    item = KeyValue(key=str(key))
+    if isinstance(value, bool):
+        item.value.bool_value = value
+    elif isinstance(value, int):
+        item.value.int_value = value
+    else:
+        item.value.string_value = str(value)
+    return item
+
+
+def export_requests(spans: list[dict], *, batch: int = 200):
+    """OTLP protobuf requests. One resource per peer so Phoenix opens one project."""
+
+    from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import (
+        ExportTraceServiceRequest,
+    )
+
+    grouped: dict[str, list[dict]] = {}
+    for span in spans:
+        resource = span.get("resource") if isinstance(span.get("resource"), dict) else {}
+        project = str(resource.get("openinference.project.name") or "")
+        if not project:
+            continue
+        grouped.setdefault(project, []).append(span)
+    requests = []
+    for project, group in grouped.items():
+        for start in range(0, len(group), batch):
+            chunk = group[start : start + batch]
+            request = ExportTraceServiceRequest()
+            resource_spans = request.resource_spans.add()
+            for key, value in chunk[0]["resource"].items():
+                resource_spans.resource.attributes.append(_attribute(key, value))
+            scope = resource_spans.scope_spans.add()
+            scope.scope.name = "optagent"
+            for span in chunk:
+                encoded = scope.spans.add()
+                encoded.trace_id = bytes.fromhex(str(span["trace_id"]))
+                encoded.span_id = bytes.fromhex(str(span["span_id"]))
+                encoded.name = str(span.get("name") or "span")
+                start_ns = int(span.get("start_time_unix_nano") or 0)
+                end_ns = int(span.get("end_time_unix_nano") or 0)
+                encoded.start_time_unix_nano = start_ns
+                encoded.end_time_unix_nano = end_ns if end_ns >= start_ns else start_ns
+                attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
+                for key, value in attributes.items():
+                    encoded.attributes.append(_attribute(key, value))
+            requests.append(request)
+    return requests
+
+
+def post_spans(spans: list[dict], endpoint: str = "http://127.0.0.1:9891/v1/traces") -> int:
+    """Load span records into a Phoenix OTLP/HTTP endpoint. Returns the span count sent."""
+
+    import urllib.request
+
+    sent = 0
+    for request in export_requests(spans):
+        count = sum(len(scope.spans) for resource in request.resource_spans for scope in resource.scope_spans)
+        body = request.SerializeToString()
+        call = urllib.request.Request(
+            endpoint,
+            data=body,
+            method="POST",
+            headers={"Content-Type": "application/x-protobuf"},
+        )
+        with urllib.request.urlopen(call, timeout=60) as response:
+            if response.status != 200:
+                raise RuntimeError(f"phoenix {endpoint} returned {response.status}")
+        sent += count
+    return sent
+
+
 def index_spans(spans: list[dict]) -> dict:
     """Projects, then sessions, then traces. This is what the Sessions page reads."""
 

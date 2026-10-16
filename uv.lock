@@ -765,6 +765,18 @@ wheels = [
 ]
 
 [[package]]
+name = "opentelemetry-proto"
+version = "1.45.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/4b/7f/15f014fb195da6c2dbb6c71399b8e76824878718e94de6454038488eed28/opentelemetry_proto-1.45.1.tar.gz", hash = "sha256:79e0fb95e4616691a469439238aa9224d75779b3e108e895d1aa125ab29ca77c", size = 46488, upload-time = "2026-10-06T17:33:11.49Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/9a/42ec8180a769516ae757e893b69736826efceac7332553915b4528a91c6d/opentelemetry_proto-1.45.1-py3-none-any.whl", hash = "sha256:f38e2a8413053c180cd3d2637fbb279673ec2f6a6e09c995aafa2f452c52b46e", size = 72488, upload-time = "2026-10-06T17:32:53.057Z" },
+]
+
+[[package]]
 name = "optagent"
 version = "0.1.0"
 source = { editable = "." }
@@ -779,6 +791,9 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "pytest" },
+]
+phoenix = [
+    { name = "opentelemetry-proto" },
 ]
 viz = [
     { name = "bokeh" },
@@ -795,6 +810,7 @@ requires-dist = [
     { name = "grpcio", specifier = ">=1.71" },
     { name = "grpcio-reflection", specifier = ">=1.71" },
     { name = "holoviews", marker = "extra == 'viz'", specifier = ">=1.20" },
+    { name = "opentelemetry-proto", marker = "extra == 'phoenix'", specifier = ">=1.33" },
     { name = "pandas", marker = "extra == 'viz'", specifier = ">=2.2" },
     { name = "panel", marker = "extra == 'viz'", specifier = ">=1.5" },
     { name = "protobuf", specifier = ">=6.31.1" },
@@ -802,7 +818,7 @@ requires-dist = [
     { name = "pyhocon", specifier = ">=0.3.61" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
 ]
-provides-extras = ["dev", "viz"]
+provides-extras = ["dev", "viz", "phoenix"]
 
 [[package]]
 name = "packaging"
