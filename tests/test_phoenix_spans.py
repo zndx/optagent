@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from optagent.phoenix_spans import index_spans, make_span, session_id, trace_id_for, write_jsonl
+from optagent.phoenix_spans import activity_points, index_spans, make_span, session_id, trace_id_for, write_jsonl
 from optagent.snapshot_store import install_archive
 
 
@@ -47,6 +47,32 @@ def test_one_thought_is_one_trace_and_the_project_is_on_the_resource() -> None:
     indexed = index_spans([span])
     assert indexed["projects"][0]["name"] == "gaius"
     assert indexed["projects"][0]["sessions"][0]["traces"][0]["name"] == "curiosity"
+
+
+def test_activity_points_keep_time_and_drop_trace_bodies() -> None:
+    span = make_span(
+        project="metabase",
+        session="metabase:visit-1",
+        name="Overview of SDG",
+        activity="question",
+        capability="dashboard",
+        service_name="metabase",
+        trace_key="msg-1",
+        start_time_unix_nano=1_700_000_000_000_000_000,
+        input_value="show the ontology",
+        output_value="a long answer",
+    )
+    points = activity_points([span])
+    assert points == [
+        {
+            "t": 1_700_000_000_000,
+            "project": "metabase",
+            "activity": "question",
+            "session": "metabase:visit-1",
+            "name": "Overview of SDG",
+        }
+    ]
+    assert "output.value" not in points[0]
 
 
 def test_upload_installs_a_version_two_archive(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

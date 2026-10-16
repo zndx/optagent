@@ -449,6 +449,8 @@ button.cog-rail-item {
 .cog-panel-head h2,
 .cog-panel-head h3 { margin: 0; font-size: 0.95rem; }
 .cog-split { display: grid; grid-template-columns: 1.15fr 1fr; gap: 0.75rem; }
+.cog-hours, .cog-days { display: flex; flex-wrap: wrap; gap: 3px; }
+.cog-hours .cog-cell, .cog-days .cog-cell { width: 18px; height: 18px; }
 .cog-year { display: flex; flex-direction: column; gap: 2px; overflow: hidden; }
 .cog-year-row { display: flex; gap: 0.45rem; }
 .cog-year-dows {

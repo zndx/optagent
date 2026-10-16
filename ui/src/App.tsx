@@ -295,9 +295,289 @@ function countBy(members: Member[], key: "project" | "kind"): [string, number][]
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
+type ActivityPoint = { t: number; project: string; activity: string; session: string; name: string };
+
+const WINDOW_MS: Record<string, number> = {
+  "24h": 86_400_000,
+  "7d": 7 * 86_400_000,
+  "30d": 30 * 86_400_000,
+  "90d": 90 * 86_400_000,
+  "365d": 365 * 86_400_000,
+};
+
+function heatLevel(count: number, max: number): string {
+  if (!count || !max) return "cog-h0";
+  const share = count / max;
+  if (share > 0.75) return "cog-h4";
+  if (share > 0.5) return "cog-h3";
+  if (share > 0.25) return "cog-h2";
+  return "cog-h1";
+}
+
+function ArchiveCognition({
+  points,
+  projects,
+  onRefresh,
+}: {
+  points: ActivityPoint[];
+  projects: string[];
+  onRefresh: () => void;
+}) {
+  const [project, setProject] = useState("");
+  const [activity, setActivity] = useState("");
+  const [windowId, setWindowId] = useState("365d");
+  const now = Date.now();
+  const earliest = points.reduce((min, point) => Math.min(min, point.t || now), now);
+  const start = windowId === "all" ? earliest : now - (WINDOW_MS[windowId] ?? WINDOW_MS["365d"]);
+  const scoped = points.filter((point) => {
+    if (project && point.project !== project) return false;
+    return point.t >= start && point.t <= now;
+  });
+  const visible = activity ? scoped.filter((point) => point.activity === activity) : scoped;
+  const activities = [...new Set(scoped.map((point) => point.activity).filter(Boolean))].sort();
+  const sessions = new Map<string, { id: string; project: string; activity: string; name: string; count: number }>();
+  for (const point of visible) {
+    const current = sessions.get(point.session) ?? { id: point.session, project: point.project, activity: point.activity, name: point.name, count: 0 };
+    current.count += 1;
+    if (point.name) current.name = point.name;
+    sessions.set(point.session, current);
+  }
+  const top = [...sessions.values()].sort((a, b) => b.count - a.count || a.id.localeCompare(b.id)).slice(0, 8);
+  const byProject = countPairs(visible.map((point) => point.project));
+  const byActivity = countPairs(visible.map((point) => point.activity || "span"));
+  const activeDays = new Set(visible.map((point) => new Date(point.t).toISOString().slice(0, 10))).size;
+  const stats: [string, string, string][] = [
+    [String(new Set(visible.map((point) => point.project)).size), "Projects", "in this window"],
+    [String(sessions.size), "Sessions", "prefixed ids"],
+    [String(visible.length), "Traces", "one span tree"],
+    [String(activeDays), "Active days", "UTC"],
+    [String(byActivity.length), "Activities", byActivity.map(([name]) => name).slice(0, 3).join(" · ")],
+    [String(top[0]?.count ?? 0), "Busiest session", top[0]?.id ?? ""],
+  ];
+  const heat = buildHeat(visible, windowId, start, now);
+  return (
+    <div className="cog-page">
+      <aside className="cog-rail" aria-label="Snapshot projects">
+        <div className="cog-rail-head">
+          <span className="cog-kicker">{visible.length} TRACES</span>
+          <select className="cog-select" aria-label="Project" value={project} onChange={(event) => { setProject(event.target.value); setActivity(""); }}>
+            <option value="">All projects</option>
+            {projects.map((name) => (
+              <option key={name} value={name}>
+                {name} · {points.filter((point) => point.project === name && point.t >= start && point.t <= now).length}
+              </option>
+            ))}
+          </select>
+        </div>
+        <ul className="cog-rail-list">
+          <li>
+            <button type="button" className={activity === "" ? "cog-rail-item active" : "cog-rail-item"} onClick={() => setActivity("")}>
+              <div className="cog-rail-title">All activity</div>
+            </button>
+          </li>
+          {activities.map((name) => (
+            <li key={name}>
+              <button type="button" className={activity === name ? "cog-rail-item active" : "cog-rail-item"} onClick={() => setActivity(name)}>
+                <div className="cog-rail-title">{name}</div>
+                <div className="cog-rail-meta">
+                  <span className="cog-type">{name.toUpperCase()}</span>
+                  <span className="muted">{scoped.filter((point) => point.activity === name).length}</span>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="cog-rail-foot mono muted">signals-snapshot · {projects.length} projects</div>
+      </aside>
+      <section className="cog-main">
+        <div className="cog-toolbar">
+          <label className="cog-toolbar-label">
+            Window
+            <select className="cog-select" aria-label="Window" value={windowId} onChange={(event) => setWindowId(event.target.value)}>
+              {WINDOWS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <button type="button" className="btn" onClick={onRefresh}>Refresh</button>
+          <span className="pill">snapshot</span>
+        </div>
+        <div className="cog-stats" aria-label="Snapshot totals">
+          {stats.map(([value, label, sub]) => (
+            <div className="landing-stat" key={label}>
+              <div className="landing-stat-value">{value}</div>
+              <div className="landing-stat-label">{label}</div>
+              {sub ? <div className="muted cog-stat-sub">{sub}</div> : null}
+            </div>
+          ))}
+        </div>
+        <div className="cog-panel">
+          <div className="cog-panel-head">
+            <h2>Activity</h2>
+            <span className="muted">{WINDOWS.find(([value]) => value === windowId)?.[1]}</span>
+          </div>
+          <Heatmap heat={heat} />
+          {visible.length === 0 ? <p className="muted cog-empty">No spans in this window.</p> : null}
+        </div>
+        <div className="cog-split">
+          <div className="cog-panel">
+            <div className="cog-panel-head"><h3>Contributions</h3></div>
+            <div className="cog-contrib">
+              <Contrib title="By project" rows={byProject} max={Math.max(1, ...byProject.map(([, count]) => count))} />
+              <Contrib title="By activity" rows={byActivity} max={Math.max(1, ...byActivity.map(([, count]) => count))} />
+            </div>
+          </div>
+          <div className="cog-panel">
+            <div className="cog-panel-head"><h2>Sessions</h2><span className="muted">traces</span></div>
+            <ol className="cog-top">
+              {top.length === 0 ? <li className="muted cog-empty">No sessions in this window.</li> : null}
+              {top.map((item, index) => (
+                <li className="cog-top-item" key={item.id}>
+                  <span className="cog-top-n">{index + 1}</span>
+                  <span>
+                    <div className="cog-top-title">{item.name || item.id}</div>
+                    <div className="muted cog-top-sub">{item.id}</div>
+                  </span>
+                  <span className="cog-top-score">{item.count}</span>
+                </li>
+              ))}
+            </ol>
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function countPairs(values: string[]): [string, number][] {
+  const counts = new Map<string, number>();
+  for (const value of values) counts.set(value, (counts.get(value) ?? 0) + 1);
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+}
+
+type HeatCell = { key: string; count: number; label: string };
+type Heat = { mode: "row" | "weeks"; cells: HeatCell[][]; max: number };
+
+function buildHeat(points: ActivityPoint[], windowId: string, start: number, now: number): Heat {
+  const counts = new Map<number, number>();
+  for (const point of points) {
+    const bucket = windowId === "24h" ? Math.floor(point.t / 3_600_000) : Math.floor(point.t / 86_400_000);
+    counts.set(bucket, (counts.get(bucket) ?? 0) + 1);
+  }
+  if (windowId === "24h") {
+    const first = Math.floor(start / 3_600_000);
+    const cells = Array.from({ length: 24 }, (_, index) => {
+      const bucket = first + index;
+      const label = new Date(bucket * 3_600_000).toISOString().slice(11, 16);
+      return { key: String(bucket), count: counts.get(bucket) ?? 0, label };
+    });
+    return { mode: "row", cells: [cells], max: Math.max(1, ...cells.map((cell) => cell.count)) };
+  }
+  if (windowId === "7d" || windowId === "30d") {
+    const first = Math.floor(start / 86_400_000);
+    const last = Math.floor(now / 86_400_000);
+    const cells: HeatCell[] = [];
+    for (let bucket = first; bucket <= last; bucket += 1) {
+      cells.push({
+        key: String(bucket),
+        count: counts.get(bucket) ?? 0,
+        label: new Date(bucket * 86_400_000).toISOString().slice(0, 10),
+      });
+    }
+    return { mode: "row", cells: [cells], max: Math.max(1, ...cells.map((cell) => cell.count)) };
+  }
+  const first = Math.floor(start / 86_400_000);
+  const last = Math.floor(now / 86_400_000);
+  const days: HeatCell[] = [];
+  for (let bucket = first; bucket <= last; bucket += 1) {
+    days.push({
+      key: String(bucket),
+      count: counts.get(bucket) ?? 0,
+      label: new Date(bucket * 86_400_000).toISOString().slice(0, 10),
+    });
+  }
+  const pad = new Date(first * 86_400_000).getUTCDay();
+  const padded: HeatCell[] = [
+    ...Array.from({ length: pad }, (_, index) => ({ key: `pad-${index}`, count: 0, label: "" })),
+    ...days,
+  ];
+  const columns: HeatCell[][] = [];
+  for (let index = 0; index < padded.length; index += 7) {
+    const column = padded.slice(index, index + 7);
+    while (column.length < 7) column.push({ key: `end-${index}-${column.length}`, count: 0, label: "" });
+    columns.push(column);
+  }
+  return { mode: "weeks", cells: columns, max: Math.max(1, ...days.map((cell) => cell.count)) };
+}
+
+function Heatmap({ heat }: { heat: Heat }) {
+  if (heat.mode === "weeks") {
+    return (
+      <div className="cog-year" role="img" aria-label="Activity heatmap">
+        <div className="cog-year-row">
+          <div className="cog-year-dows">
+            {DOW.map((label, index) => (
+              <span key={index}>{label}</span>
+            ))}
+          </div>
+          <div className="cog-year-weeks">
+            {heat.cells.map((column, index) => (
+              <div className="cog-year-col" key={index}>
+                {column.map((cell) => (
+                  <span key={cell.key} className={`cog-cell ${heatLevel(cell.count, heat.max)}`} title={cell.label ? `${cell.label}: ${cell.count}` : ""} />
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+  const row = heat.cells[0] ?? [];
+  return (
+    <div className={row.length > 14 ? "cog-days" : "cog-hours"} role="img" aria-label="Activity heatmap">
+      {row.map((cell) => (
+        <span key={cell.key} className={`cog-cell ${heatLevel(cell.count, heat.max)}`} title={`${cell.label}: ${cell.count}`} />
+      ))}
+    </div>
+  );
+}
+
 function Landing({ workspace, onRefresh }: { workspace: Workspace | null; onRefresh: () => void }) {
+  const [activityPoints, setActivityPoints] = useState<ActivityPoint[]>([]);
+  const [activityProjects, setActivityProjects] = useState<string[]>([]);
   const [project, setProject] = useState("");
   const [windowId, setWindowId] = useState("365d");
+  useEffect(() => {
+    fetch("/api/optagent/v1/activity")
+      .then((response) => response.json())
+      .then((data: { points?: ActivityPoint[]; projects?: string[] }) => {
+        setActivityPoints(data.points ?? []);
+        setActivityProjects(data.projects ?? []);
+      })
+      .catch(() => {
+        setActivityPoints([]);
+        setActivityProjects([]);
+      });
+  }, [workspace?.loaded_snapshot_id]);
+  if (activityPoints.length) {
+    return (
+      <ArchiveCognition
+        points={activityPoints}
+        projects={activityProjects.length ? activityProjects : [...new Set(activityPoints.map((point) => point.project))]}
+        onRefresh={() => {
+          onRefresh();
+          fetch("/api/optagent/v1/activity")
+            .then((response) => response.json())
+            .then((data: { points?: ActivityPoint[]; projects?: string[] }) => {
+              setActivityPoints(data.points ?? []);
+              setActivityProjects(data.projects ?? []);
+            })
+            .catch(() => undefined);
+        }}
+      />
+    );
+  }
   const members = workspace?.snapshot?.members ?? [];
   const projects = countBy(members, "project");
   const visible = project ? members.filter((member) => member.project === project) : members;

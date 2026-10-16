@@ -680,6 +680,36 @@ def _summary_origin(runtime) -> dict:
     }
 
 
+def _loaded_spans(runtime) -> list:
+    from pathlib import Path
+
+    from optagent.phoenix_spans import load_member_spans
+
+    origin = _origin_snapshot(runtime)
+    root = Path(str(origin.get("location") or "")).parent
+    if not root.is_dir():
+        return []
+    return load_member_spans(root, origin.get("members") or [])
+
+
+def _activity(runtime) -> dict:
+    """Projects in the snapshot, and one point per span for the heatmap."""
+
+    from optagent.phoenix_spans import activity_points
+
+    origin = _origin_snapshot(runtime)
+    points = activity_points(_loaded_spans(runtime))
+    projects: list[str] = []
+    for member in origin.get("members") or []:
+        name = str(member.get("project") or "")
+        if name and name not in projects:
+            projects.append(name)
+    for point in points:
+        if point["project"] not in projects:
+            projects.append(point["project"])
+    return {"projects": projects, "points": points}
+
+
 def _sessions_origin(runtime) -> dict:
     """Profile directory plus any spans carried by the loaded snapshot."""
 
@@ -780,6 +810,8 @@ def response_for(
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "summary_origin", _summary_origin)).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions":
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", _sessions_origin)).encode(), extra
+    if parsed.path == "/api/optagent/v1/activity":
+        return 200, "application/json; charset=utf-8", json.dumps(_activity(runtime)).encode(), extra
     document = _cached_snapshot(runtime) if enabled else None
     view = {
         "sample_mode": enabled,

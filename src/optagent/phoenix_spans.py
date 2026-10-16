@@ -211,6 +211,35 @@ def post_spans(spans: list[dict], endpoint: str = "http://127.0.0.1:9891/v1/trac
     return sent
 
 
+def activity_points(spans: list[dict]) -> list[dict]:
+    """Compact points for the cognition heatmap. Trace bodies stay out of this list."""
+
+    points = []
+    for span in spans:
+        resource = span.get("resource") if isinstance(span.get("resource"), dict) else {}
+        attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
+        project = str(resource.get("openinference.project.name") or attributes.get("openinference.project.name") or "")
+        if not project:
+            continue
+        activity = str(
+            attributes.get(f"{project}.activity")
+            or attributes.get("gaius.activity")
+            or attributes.get("metabase.activity")
+            or ""
+        )
+        points.append(
+            {
+                "t": int(span.get("start_time_unix_nano") or 0) // 1_000_000,
+                "project": project,
+                "activity": activity,
+                "session": str(attributes.get("session.id") or ""),
+                "name": str(span.get("name") or "")[:160],
+            }
+        )
+    points.sort(key=lambda item: (item["t"], item["project"], item["session"]))
+    return points
+
+
 def index_spans(spans: list[dict]) -> dict:
     """Projects, then sessions, then traces. This is what the Sessions page reads."""
 
