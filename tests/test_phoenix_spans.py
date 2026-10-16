@@ -77,7 +77,11 @@ def test_one_thought_is_one_trace_and_the_project_is_on_the_resource() -> None:
     detail = trace_detail([span, other], span["trace_id"])
     assert detail is not None
     assert detail["output"] == "The thought body."
+    assert detail["t"] == 0
     assert detail["attributes"]["gaius.thought.type"] == "curiosity"
+    later = trace_detail([span, other], other["trace_id"])
+    assert later is not None
+    assert later["t"] == 2_000_000_000
 
 
 def test_activity_points_keep_time_and_drop_trace_bodies() -> None:

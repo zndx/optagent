@@ -61,6 +61,7 @@ type ExplorerTrace = { trace_id: string; name: string; t: number; span_kind: str
 type TraceDetail = {
   trace_id: string;
   name: string;
+  t: number;
   project: string;
   session: string;
   activity: string;
@@ -434,8 +435,10 @@ function ArchiveCognition({
             <h2>Activity</h2>
             <span className="muted">{WINDOWS.find(([value]) => value === windowId)?.[1]}</span>
           </div>
-          <Heatmap heat={heat} />
-          {visible.length === 0 ? <p className="muted cog-empty">No spans in this window.</p> : null}
+          <Heatmap key={windowId} heat={heat} />
+          <p className="muted cog-empty">
+            {visible.length} traces · {formatStamp(start)} – {formatStamp(now)}
+          </p>
         </div>
         <div className="cog-split">
           <div className="cog-panel">
@@ -798,21 +801,42 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
   const [traces, setTraces] = useState<ExplorerTrace[]>([]);
   const [traceId, setTraceId] = useState("");
   const [detail, setDetail] = useState<TraceDetail | null>(null);
+  const [points, setPoints] = useState<ActivityPoint[]>([]);
   const now = Date.now();
-  const earliest = allSessions.reduce((min, item) => Math.min(min, item.t0 || now), now);
+  const earliestPoint = points.reduce((min, point) => Math.min(min, point.t || now), now);
+  const earliestSession = allSessions.reduce((min, item) => Math.min(min, item.t0 || now), now);
+  const earliest = Math.min(earliestPoint, earliestSession);
   const start = windowId === "all" ? earliest : now - (WINDOW_MS[windowId] ?? WINDOW_MS["365d"]);
   const needle = query.trim().toLowerCase();
-  const scoped = allSessions.filter((item) => {
-    if (project && item.project !== project) return false;
-    if (item.t1 < start || (item.t0 && item.t0 > now)) return false;
-    return true;
-  });
-  const activities = [...new Set(scoped.map((item) => item.activity).filter(Boolean))].sort();
-  const visible = scoped.filter((item) => {
+  const hits = new Map<string, { count: number; latest: number }>();
+  for (const point of points) {
+    if (project && point.project !== project) continue;
+    if (point.t < start || point.t > now) continue;
+    const current = hits.get(point.session) ?? { count: 0, latest: 0 };
+    current.count += 1;
+    current.latest = Math.max(current.latest, point.t);
+    hits.set(point.session, current);
+  }
+  const activities = [
+    ...new Set(
+      allSessions
+        .filter((item) => hits.has(item.id))
+        .map((item) => item.activity)
+        .filter(Boolean),
+    ),
+  ].sort();
+  const visible = allSessions.filter((item) => {
+    if (!hits.has(item.id)) return false;
     if (activity && item.activity !== activity) return false;
     if (!needle) return true;
     return `${item.name} ${item.id}`.toLowerCase().includes(needle);
   });
+  useEffect(() => {
+    fetch("/api/optagent/v1/activity")
+      .then((response) => response.json())
+      .then((data: { points?: ActivityPoint[] }) => setPoints(data.points ?? []))
+      .catch(() => setPoints([]));
+  }, [doc]);
   useEffect(() => {
     if (!sessionId) {
       setTraces([]);
@@ -842,8 +866,24 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
       .catch(() => undefined);
     return () => controller.abort();
   }, [traceId]);
-  const traceNeedle = needle;
-  const shownTraces = traces.filter((item) => !traceNeedle || item.name.toLowerCase().includes(traceNeedle)).slice(0, 200);
+  const inWindow = traces.filter((item) => item.t >= start && item.t <= now);
+  const shownTraces = inWindow
+    .filter((item) => !needle || item.name.toLowerCase().includes(needle))
+    .slice(0, 200);
+  useEffect(() => {
+    if (!sessionId) return;
+    if (points.length && !hits.has(sessionId)) {
+      setSessionId("");
+      return;
+    }
+    if (activity && allSessions.some((item) => item.id === sessionId && item.activity !== activity)) {
+      setSessionId("");
+      return;
+    }
+    if (inWindow.length && !inWindow.some((item) => item.trace_id === traceId)) {
+      setTraceId(inWindow[0].trace_id);
+    }
+  }, [windowId, sessionId, activity, points, traces, traceId]);
   return (
     <div className="cog-page">
       <aside className="cog-rail" aria-label="Sessions">
@@ -862,7 +902,7 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
             <option value="">All projects</option>
             {projects.map((name) => (
               <option key={name} value={name}>
-                {name} · {allSessions.filter((item) => item.project === name).length}
+                {name} · {points.filter((point) => point.project === name && point.t >= start && point.t <= now).length}
               </option>
             ))}
           </select>
@@ -879,7 +919,7 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
                 <div className="cog-rail-title">{name}</div>
                 <div className="cog-rail-meta">
                   <span className="cog-type">{name.toUpperCase()}</span>
-                  <span className="muted">{scoped.filter((item) => item.activity === name).length}</span>
+                  <span className="muted">{allSessions.filter((item) => hits.has(item.id) && item.activity === name).length}</span>
                 </div>
               </button>
             </li>
@@ -893,8 +933,8 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
               >
                 <div className="cog-rail-title">{item.name || item.id}</div>
                 <div className="cog-rail-meta">
-                  <span className="muted">{formatStamp(item.t1)}</span>
-                  <span className="cog-type">{item.trace_count}</span>
+                  <span className="muted">{formatStamp(hits.get(item.id)?.latest || item.t1)}</span>
+                  <span className="cog-type">{hits.get(item.id)?.count ?? item.trace_count}</span>
                 </div>
               </button>
             </li>
@@ -926,7 +966,9 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
           <div className="cog-panel ses-trace-list">
             <div className="cog-panel-head">
               <h2>{sessionId ? "Traces" : "Session"}</h2>
-              <span className="muted">{sessionId ? `${shownTraces.length} of ${traces.length}` : "Choose a session"}</span>
+              <span className="muted">
+                {sessionId ? `${shownTraces.length} of ${inWindow.length} in this window` : "Choose a session"}
+              </span>
             </div>
             {shownTraces.length === 0 ? <p className="muted cog-empty">No trace is open.</p> : null}
             <ul className="cog-rail-list">
@@ -951,7 +993,7 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
             <header className="sum-panel-head">
               <h2>{detail?.name || "Trace"}</h2>
               <span className="muted sum-panel-meta">
-                {[detail?.span_kind, detail?.activity, detail?.attributes?.["llm.model_name"], detail?.attributes?.["llm.token_count.total"]]
+                {[formatStamp(detail?.t || 0), detail?.span_kind, detail?.activity, detail?.attributes?.["llm.model_name"], detail?.attributes?.["llm.token_count.total"]]
                   .filter((part) => part !== undefined && part !== "")
                   .join(" · ")}
               </span>

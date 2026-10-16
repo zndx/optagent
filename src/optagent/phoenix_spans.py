@@ -330,6 +330,7 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
         return {
             "trace_id": trace_id,
             "name": span.get("name") or "",
+            "t": int(span.get("start_time_unix_nano") or 0) // 1_000_000,
             "project": project,
             "session": sid,
             "activity": activity,
