@@ -50,16 +50,34 @@ def make_span(
     attributes: dict | None = None,
     start_time_unix_nano: int = 0,
     end_time_unix_nano: int = 0,
+    input_value: str = "",
+    output_value: str = "",
+    span_kind: str = "CHAIN",
 ) -> dict:
-    """One span. Filter fields are on the span. The project is also on the resource."""
+    """One span. Filter fields are on the span. The project is also on the resource.
+
+    Phoenix renders ``input.value`` and ``output.value``. A span that only
+    carries a name looks empty in the trace view.
+    """
 
     sid = session if session.startswith(f"{project}:") else session_id(project, session)
+    start_ns = int(start_time_unix_nano)
+    end_ns = int(end_time_unix_nano)
+    if start_ns and end_ns < start_ns:
+        end_ns = start_ns + 1_000_000_000
     attrs = {
         "session.id": sid,
         "openinference.project.name": project,
+        "openinference.span.kind": span_kind,
         "lattice.capability": capability,
         "service.name": service_name,
     }
+    if input_value:
+        attrs["input.value"] = input_value
+        attrs["input.mime_type"] = "text/plain"
+    if output_value:
+        attrs["output.value"] = output_value
+        attrs["output.mime_type"] = "text/plain"
     if project == "gaius":
         attrs["gaius.activity"] = activity
     elif project == "metabase":
@@ -72,8 +90,8 @@ def make_span(
         "trace_id": trace_id_for(project, trace_key),
         "span_id": trace_id_for(project, f"span:{trace_key}")[:16],
         "name": name,
-        "start_time_unix_nano": int(start_time_unix_nano),
-        "end_time_unix_nano": int(end_time_unix_nano),
+        "start_time_unix_nano": start_ns,
+        "end_time_unix_nano": end_ns,
         "resource": {
             "openinference.project.name": project,
             "service.name": service_name,
@@ -163,6 +181,7 @@ def export_requests(spans: list[dict], *, batch: int = 200):
                 end_ns = int(span.get("end_time_unix_nano") or 0)
                 encoded.start_time_unix_nano = start_ns
                 encoded.end_time_unix_nano = end_ns if end_ns >= start_ns else start_ns
+                encoded.status.code = 1
                 attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
                 for key, value in attributes.items():
                     encoded.attributes.append(_attribute(key, value))

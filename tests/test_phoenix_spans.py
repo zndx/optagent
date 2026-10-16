@@ -34,8 +34,13 @@ def test_one_thought_is_one_trace_and_the_project_is_on_the_resource() -> None:
         service_name="gaius-engine",
         trace_key="thought-9",
         attributes={"gaius.thought.id": "thought-9", "gaius.thought.type": "curiosity"},
+        input_value="curiosity",
+        output_value="The thought body.",
     )
     assert span["resource"]["openinference.project.name"] == "gaius"
+    assert span["attributes"]["input.value"] == "curiosity"
+    assert span["attributes"]["output.value"] == "The thought body."
+    assert span["attributes"]["openinference.span.kind"] == "CHAIN"
     assert span["attributes"]["session.id"] == "gaius:cognition:cycle-1"
     assert span["attributes"]["gaius.activity"] == "cognition"
     assert span["attributes"]["gaius.thought.id"] == "thought-9"

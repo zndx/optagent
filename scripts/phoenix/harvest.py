@@ -57,8 +57,8 @@ def gaius_spans(database_url: str) -> tuple[list[dict], dict]:
             )
         thoughts = conn.execute(
             """
-            SELECT t.id::text, t.thought_type, t.title, t.summary, t.created_at,
-                   c.id::text
+            SELECT t.id::text, t.thought_type, t.title, t.summary, t.content,
+                   t.generator_model, t.tokens_used, t.created_at, c.id::text
             FROM cognition_thoughts t
             LEFT JOIN cognition_cycles c
               ON t.created_at >= c.started_at
@@ -68,11 +68,12 @@ def gaius_spans(database_url: str) -> tuple[list[dict], dict]:
         ).fetchall()
         seen: set[str] = set()
         for row in thoughts:
-            thought_id, thought_type, title, summary, created, cycle_id = row
+            thought_id, thought_type, title, summary, content, model, tokens, created, cycle_id = row
             if thought_id in seen:
                 continue
             seen.add(thought_id)
             local = ("cognition", cycle_id) if cycle_id else ("cognition", "unassigned")
+            prompt = "\n\n".join(part for part in (str(title or ""), str(summary or "")) if part.strip())
             spans.append(
                 make_span(
                     project="gaius",
@@ -83,16 +84,38 @@ def gaius_spans(database_url: str) -> tuple[list[dict], dict]:
                     service_name="gaius-engine",
                     trace_key=thought_id,
                     start_time_unix_nano=_ns(created),
+                    input_value=prompt or str(thought_type or "thought"),
+                    output_value=str(content or summary or ""),
+                    span_kind="LLM" if model else "CHAIN",
                     attributes={
                         "gaius.thought.id": thought_id,
                         "gaius.thought.type": thought_type or "",
-                        "gaius.thought.summary": (summary or "")[:500],
+                        "llm.model_name": model or "",
+                        "llm.token_count.total": int(tokens or 0),
                     },
                 )
             )
             if created is not None:
                 watermark["max"] = created.isoformat()
     return spans, watermark
+
+
+def _message_text(raw: str | None) -> str:
+    if not raw:
+        return ""
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return raw
+    if isinstance(loaded, list):
+        parts = []
+        for item in loaded:
+            if isinstance(item, dict) and item.get("text"):
+                parts.append(str(item["text"]))
+        return "\n".join(parts) or raw
+    if isinstance(loaded, dict):
+        return str(loaded.get("text") or loaded.get("content") or raw)
+    return str(loaded)
 
 
 def metabase_spans(database_url: str) -> tuple[list[dict], dict]:
@@ -103,35 +126,47 @@ def metabase_spans(database_url: str) -> tuple[list[dict], dict]:
     with psycopg.connect(database_url) as conn:
         rows = conn.execute(
             """
-            SELECT m.id::text, c.id::text, m.user_id::text, m.role, m.total_tokens, m.created_at
+            SELECT m.id::text, c.id::text, c.title, m.user_id::text, m.role,
+                   m.total_tokens, m.data::text, m.created_at
             FROM metabot_message m
             JOIN metabot_conversation c ON c.id = m.conversation_id
             WHERE m.deleted_at IS NULL
-            ORDER BY m.created_at
+            ORDER BY m.conversation_id, m.created_at
             """
         ).fetchall()
-        for message_id, conversation_id, user_id, role, tokens, created in rows:
+        previous_user: dict[str, str] = {}
+        for message_id, conversation_id, title, user_id, role, tokens, data, created in rows:
             # The application row has a user, not a Metabase session id.
             # A conversation with a user is the interactive visit. A row
             # with no user is an unattended query.
+            text = _message_text(data)
             if user_id:
                 sid = session_id("metabase", conversation_id)
             else:
                 sid = session_id("metabase", "query", conversation_id)
+            role_name = str(role or "metabot")
+            if role_name == "user":
+                previous_user[conversation_id] = text
+                incoming, outgoing, kind = text, "", "CHAIN"
+            else:
+                incoming, outgoing, kind = previous_user.get(conversation_id, title or ""), text, "LLM"
             spans.append(
                 make_span(
                     project="metabase",
                     session=sid,
-                    name=str(role or "metabot"),
+                    name=title or role_name,
                     activity="question",
                     capability="dashboard",
                     service_name="metabase",
                     trace_key=message_id,
                     start_time_unix_nano=_ns(created),
+                    input_value=incoming,
+                    output_value=outgoing,
+                    span_kind=kind,
                     attributes={
                         "metabase.question.id": conversation_id,
                         "user.id": user_id or "",
-                        "metabase.total_tokens": tokens or 0,
+                        "llm.token_count.total": int(tokens or 0),
                     },
                 )
             )
