@@ -22,8 +22,25 @@ from optagent.snapshot import FORMAT, parse_snapshot
 _MAX_BYTES = 256 * 1024 * 1024
 
 
+def state_dir() -> Path:
+    """Where an uploaded archive is kept.
+
+    Local devenv sets OPTAGENT_SESSION_DIR. An AMP does not, so the file
+    lands under the project directory and survives an application restart.
+    """
+
+    configured = os.environ.get("OPTAGENT_SESSION_DIR", "").strip()
+    if configured:
+        root = Path(configured)
+    else:
+        base = os.environ.get("CDSW_PROJECT_DIR") or os.environ.get("ML_PROJECT_DIR") or ""
+        root = Path(base) / ".devenv" / "state" if base else Path(".devenv/state")
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
 def store_root() -> Path:
-    root = Path(os.environ.get("OPTAGENT_SESSION_DIR", ".devenv/state")) / "signals-snapshot"
+    root = state_dir() / "signals-snapshot"
     root.mkdir(parents=True, exist_ok=True)
     return root
 

@@ -2,8 +2,12 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib.util
+import io
 import json
+import tarfile
 from pathlib import Path
+
+from optagent.phoenix_spans import make_span, write_jsonl
 
 from optagent.status import DEFAULT_GREETING, write_status
 
@@ -181,6 +185,75 @@ def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:
     assert json.loads(body)["format"] == "optagent-summary"
     status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/sessions")
     assert json.loads(body)["provider"] == "arize-phoenix"
+
+
+def test_settings_upload_is_readable_without_varnish_or_phoenix(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "1")
+    monkeypatch.setenv("CDSW_PROJECT_DIR", "")
+    span = make_span(
+        project="gaius",
+        session="gaius:cognition:cycle-1",
+        name="curiosity",
+        activity="cognition",
+        capability="cognition",
+        service_name="gaius-engine",
+        trace_key="thought-1",
+        start_time_unix_nano=1_772_010_915_092_724_000,
+        input_value="What changed?",
+        output_value="The thought body.",
+    )
+    root = tmp_path / "build"
+    write_jsonl(root / "projects" / "gaius" / "spans.jsonl", [span])
+    document = {
+        "format": "signals-snapshot",
+        "format-version": 2,
+        "snapshot-id": "00000000-0000-7000-8000-0000000000bb",
+        "sequence-number": 2,
+        "timestamp-ms": 1,
+        "summary": {},
+        "members": [
+            {
+                "project": "signals",
+                "kind": "iceberg",
+                "name": "hx",
+                "metadata-location": "s3://signals-snapshots/sample/workspace/signals/",
+            },
+            {
+                "project": "gaius",
+                "kind": "spans",
+                "name": "sessions",
+                "metadata-location": "projects/gaius/spans.jsonl",
+            },
+        ],
+    }
+    (root / "signals-snapshot.json").write_text(json.dumps(document), encoding="utf-8")
+    blob = io.BytesIO()
+    with tarfile.open(fileobj=blob, mode="w:gz") as tar:
+        tar.add(root / "signals-snapshot.json", arcname="signals-snapshot.json")
+        tar.add(root / "projects" / "gaius" / "spans.jsonl", arcname="projects/gaius/spans.jsonl")
+    status, _, body, _extra = APP.response_for("POST", "/api/optagent/v1/snapshot", body=blob.getvalue())
+    uploaded = json.loads(body)
+    assert status == 200
+    assert uploaded["loaded_snapshot_id"] == document["snapshot-id"]
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/activity")
+    activity = json.loads(body)
+    assert status == 200
+    assert "signals" in activity["projects"]
+    assert activity["points"][0]["t"] == 1_772_010_915_092
+    assert "output" not in activity["points"][0]
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/sessions")
+    catalog = json.loads(body)["phoenix"]
+    assert catalog["sessions"][0]["trace_count"] == 1
+    assert "output.value" not in catalog["sessions"][0]
+    status, _, body, _extra = APP.response_for(
+        "GET", "/api/optagent/v1/trace?id=" + span["trace_id"]
+    )
+    detail = json.loads(body)
+    assert status == 200
+    assert detail["input"] == "What changed?"
+    assert detail["output"] == "The thought body."
+    assert detail["t"] == 1_772_010_915_092
 
 
 def test_health_and_unknown_routes() -> None:

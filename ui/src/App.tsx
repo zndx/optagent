@@ -274,7 +274,11 @@ export default function App() {
                   headers: { "Content-Type": "application/gzip" },
                   body: file,
                 });
-                if (!response.ok) throw new Error(`snapshot ${response.status}`);
+                if (!response.ok) {
+                  const detail = await response.json().catch(() => null);
+                  const message = detail && typeof detail.error === "string" ? detail.error : `snapshot ${response.status}`;
+                  throw new Error(message);
+                }
                 applyWorkspace((await response.json()) as Workspace);
               } catch (err: unknown) {
                 setError(err instanceof Error ? err.message : "snapshot upload failed");
