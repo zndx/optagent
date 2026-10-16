@@ -22,7 +22,7 @@ def test_bundled_sample_is_a_pointer_not_a_warehouse_copy() -> None:
     assert iceberg
     assert iceberg[0].metadata_location.startswith("s3://")
     assert all(member.known_kind for member in snapshot.members)
-    assert KNOWN_KINDS == frozenset({"iceberg", "kudu", "files", "relational"})
+    assert KNOWN_KINDS == frozenset({"iceberg", "kudu", "files", "relational", "spans"})
 
 
 def test_unknown_member_kind_is_kept() -> None:
@@ -61,6 +61,36 @@ def test_s3_location_does_not_open_the_warehouse() -> None:
 def test_bad_format_is_rejected() -> None:
     with pytest.raises(ValueError, match="signals-snapshot"):
         parse_snapshot({"format": "other", "format-version": 1, "snapshot-id": "x"})
+
+
+def test_version_two_keeps_pointer_members_and_span_files() -> None:
+    payload = {
+        "format": "signals-snapshot",
+        "format-version": 2,
+        "snapshot-id": "00000000-0000-7000-8000-000000000002",
+        "parent-snapshot-id": "00000000-0000-7000-8000-000000000001",
+        "sequence-number": 2,
+        "timestamp-ms": 1,
+        "summary": {"spans.gaius": "1"},
+        "members": [
+            {
+                "project": "gaius",
+                "kind": "iceberg",
+                "name": "hx",
+                "metadata-location": "s3://signals-snapshots/sample/workspace/gaius/",
+            },
+            {
+                "project": "gaius",
+                "kind": "spans",
+                "name": "sessions",
+                "metadata-location": "projects/gaius/spans.jsonl",
+            },
+        ],
+    }
+    parsed = parse_snapshot(payload)
+    assert parsed.members[0].kind == "iceberg"
+    assert parsed.members[1].kind == "spans"
+    assert parsed.members[1].known_kind is True
 
 
 def test_round_trip_json() -> None:

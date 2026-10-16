@@ -7,8 +7,9 @@ Iceberg keeps table metadata next to the data and only needs an atomic
 pointer to the current metadata file. Project Nessie stores that pointer
 so a client can plan without a Hive metastore scan. A signals-snapshot
 is the same kind of pointer for a whole workspace: Kudu and Iceberg
-metadata locations, files, and relational dumps. The document does not
-contain those bytes.
+metadata locations, files, and relational dumps. Format version 1 does
+not contain those bytes. Format version 2 keeps the pointer members and
+adds ``spans`` members whose files hold the OpenInference span records.
 
 Members are an open list. A new deployment adds a project name or a
 kind this process has not seen yet. Unknown kinds are kept and marked
@@ -26,7 +27,8 @@ from pathlib import Path
 
 FORMAT = "signals-snapshot"
 FORMAT_VERSION = 1
-KNOWN_KINDS = frozenset({"iceberg", "kudu", "files", "relational"})
+SUPPORTED_VERSIONS = frozenset({1, 2})
+KNOWN_KINDS = frozenset({"iceberg", "kudu", "files", "relational", "spans"})
 
 _BUNDLED = Path(__file__).resolve().parents[2] / "assets" / "sample" / "signals-snapshot.json"
 
@@ -67,7 +69,7 @@ def parse_snapshot(payload: dict, *, location: str = "") -> Snapshot:
     if payload.get("format") != FORMAT:
         raise ValueError("not a signals-snapshot document")
     version = int(payload.get("format-version", 0))
-    if version != FORMAT_VERSION:
+    if version not in SUPPORTED_VERSIONS:
         raise ValueError(f"unsupported signals-snapshot version {version}")
     snapshot_id = str(payload.get("snapshot-id") or "")
     if not snapshot_id:

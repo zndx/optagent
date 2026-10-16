@@ -599,10 +599,24 @@ def _ui_file(route: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def _origin_snapshot(runtime) -> dict:
-    from optagent.snapshot import resolve_snapshot
+def _loaded_snapshot_id() -> str:
+    from optagent.snapshot_store import installed_document
 
-    snapshot = resolve_snapshot(runtime.snapshot_s3_uri)
+    installed = installed_document()
+    if not installed:
+        return ""
+    return str(installed.get("snapshot-id") or "")
+
+
+def _origin_snapshot(runtime) -> dict:
+    from optagent.snapshot import parse_snapshot, resolve_snapshot
+    from optagent.snapshot_store import installed_document
+
+    installed = installed_document()
+    if installed is not None:
+        snapshot = parse_snapshot(installed, location=str(installed.get("location") or ""))
+    else:
+        snapshot = resolve_snapshot(runtime.snapshot_s3_uri)
     return {
         "format": "signals-snapshot",
         "format-version": 1,
@@ -611,7 +625,7 @@ def _origin_snapshot(runtime) -> dict:
         "sequence-number": snapshot.sequence_number,
         "timestamp-ms": snapshot.timestamp_ms,
         "summary": snapshot.summary,
-        "location": runtime.snapshot_s3_uri or snapshot.location,
+        "location": snapshot.location or runtime.snapshot_s3_uri,
         "members": [
             {
                 "project": member.project,
@@ -632,6 +646,8 @@ def _summary_origin(runtime) -> dict:
     projects: list[str] = []
     kinds: list[str] = []
     for member in snapshot["members"]:
+        if str(member.get("kind") or "") == "spans":
+            continue
         project = str(member["project"])
         kind = str(member["kind"])
         if project not in projects:
@@ -665,11 +681,19 @@ def _summary_origin(runtime) -> dict:
 
 
 def _sessions_origin(runtime) -> dict:
-    """Profile directory for the sessions page. Traces are not copied."""
+    """Profile directory plus any spans carried by the loaded snapshot."""
 
+    from pathlib import Path
+
+    from optagent.phoenix_spans import index_spans, load_member_spans
     from optagent.sessions import directory_from_snapshot
 
-    return directory_from_snapshot(_origin_snapshot(runtime))
+    origin = _origin_snapshot(runtime)
+    document = directory_from_snapshot(origin)
+    root = Path(str(origin.get("location") or "")).parent
+    spans = load_member_spans(root, origin["members"]) if root.is_dir() else []
+    document["phoenix"] = index_spans(spans)
+    return document
 
 
 def _cached_json(runtime, name: str, origin) -> dict:
@@ -716,7 +740,15 @@ def response_for(
 
     runtime = load_runtime()
     session, extra = _open_session(headers)
-    if method == "POST" and parsed.path in {
+    if method == "POST" and parsed.path == "/api/optagent/v1/snapshot":
+        from optagent.snapshot_store import install_archive
+
+        try:
+            install_archive(body)
+        except ValueError as exc:
+            message = json.dumps({"error": str(exc)}).encode()
+            return 400, "application/json; charset=utf-8", message, extra
+    elif method == "POST" and parsed.path in {
         "/api/optagent/v1/sample-mode",
         "/api/optagent/v1/brand",
         "/api/optagent/v1/theme",
@@ -758,6 +790,7 @@ def response_for(
         "traces_s3_uri": runtime.traces_s3_uri,
         "snapshot": document,
         "color_mode": session.get("color_mode") or "dark",
+        "loaded_snapshot_id": _loaded_snapshot_id(),
         **brand_view(runtime.brand_id),
     }
     encoded = json.dumps(view).encode("utf-8")
@@ -767,6 +800,7 @@ def response_for(
         "/api/optagent/v1/sample-mode",
         "/api/optagent/v1/brand",
         "/api/optagent/v1/theme",
+        "/api/optagent/v1/snapshot",
     }:
         return 200, "application/json; charset=utf-8", encoded, extra
     sample = None

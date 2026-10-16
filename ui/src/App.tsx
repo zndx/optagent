@@ -48,12 +48,17 @@ type AgentSession = {
   preview: string;
 };
 
+type PhoenixTrace = { trace_id?: string; name?: string; attributes?: Record<string, string | number> };
+type PhoenixSession = { id: string; activity?: string; traces: PhoenixTrace[] };
+type PhoenixProject = { name: string; sessions: PhoenixSession[] };
+
 type SessionsDoc = {
   note?: string;
   connected?: boolean;
   tenants?: { id: string; display_name: string }[];
   profiles?: AgentProfile[];
   sessions?: AgentSession[];
+  phoenix?: { projects?: PhoenixProject[] };
   stats?: {
     total: number;
     active: number;
@@ -75,6 +80,7 @@ type Workspace = {
   brand: Brand;
   brands: Brand[];
   snapshot: { "snapshot-id": string; "sequence-number": number; members: Member[] } | null;
+  loaded_snapshot_id?: string;
 };
 
 const NAV = [
@@ -240,6 +246,23 @@ export default function App() {
             onTheme={(dark) => void post("/api/optagent/v1/theme", { mode: dark ? "dark" : "light" })}
             onBrand={(brandId) => void post("/api/optagent/v1/brand", { brand_id: brandId })}
             onSample={(enabled) => void post("/api/optagent/v1/sample-mode", { enabled })}
+            onSnapshot={async (file) => {
+              setBusy(true);
+              setError("");
+              try {
+                const response = await fetch("/api/optagent/v1/snapshot", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/gzip" },
+                  body: file,
+                });
+                if (!response.ok) throw new Error(`snapshot ${response.status}`);
+                applyWorkspace((await response.json()) as Workspace);
+              } catch (err: unknown) {
+                setError(err instanceof Error ? err.message : "snapshot upload failed");
+              } finally {
+                setBusy(false);
+              }
+            }}
           />
         )}
         {error ? (
@@ -461,6 +484,99 @@ const SESSION_CATEGORIES = [
   ["all", "All"],
 ] as const;
 
+function SpanSessions({
+  projects,
+  note,
+  onRefresh,
+}: {
+  projects: PhoenixProject[];
+  note: string;
+  onRefresh: () => void;
+}) {
+  const [project, setProject] = useState(projects[0]?.name ?? "");
+  const [activity, setActivity] = useState("");
+  const [openId, setOpenId] = useState<string | null>(null);
+  const current = projects.find((item) => item.name === project) ?? projects[0];
+  const sessions = (current?.sessions ?? []).filter((item) => !activity || item.activity === activity);
+  const activities = [...new Set((current?.sessions ?? []).map((item) => item.activity || "").filter(Boolean))];
+  return (
+    <div className="cog-page">
+      <aside className="cog-rail" aria-label="Phoenix projects">
+        <div className="cog-rail-head">
+          <span className="cog-kicker">{sessions.length} SESSIONS</span>
+          <select
+            className="cog-select"
+            aria-label="Project"
+            value={current?.name ?? ""}
+            onChange={(event) => {
+              setProject(event.target.value);
+              setActivity("");
+              setOpenId(null);
+            }}
+          >
+            {projects.map((item) => (
+              <option key={item.name} value={item.name}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <ul className="cog-rail-list">
+          <li>
+            <button type="button" className={activity === "" ? "cog-rail-item active" : "cog-rail-item"} onClick={() => setActivity("")}>
+              <div className="cog-rail-title">All activity</div>
+            </button>
+          </li>
+          {activities.map((item) => (
+            <li key={item}>
+              <button
+                type="button"
+                className={activity === item ? "cog-rail-item active" : "cog-rail-item"}
+                onClick={() => setActivity(item)}
+              >
+                <div className="cog-rail-title">{item}</div>
+              </button>
+            </li>
+          ))}
+        </ul>
+        <div className="cog-rail-foot mono muted">federation.project=optagent</div>
+      </aside>
+      <section className="cog-main">
+        <div className="cog-toolbar">
+          <button type="button" className="btn" onClick={onRefresh}>
+            Refresh
+          </button>
+          <span className="pill">{current?.name ?? "project"}</span>
+        </div>
+        <p className="muted cog-empty">{note || "Spans from the loaded signals-snapshot. Phoenix is not required."}</p>
+        <ol className="cog-top">
+          {sessions.map((item) => (
+            <li key={item.id}>
+              <button
+                type="button"
+                className={openId === item.id ? "ses-row open" : "ses-row"}
+                onClick={() => setOpenId(openId === item.id ? null : item.id)}
+              >
+                <span className="cog-top-title">{item.id}</span>
+                <span className="muted cog-top-sub">{item.traces.length} traces</span>
+                <span className="cog-top-score">{item.activity}</span>
+              </button>
+              {openId === item.id
+                ? item.traces.map((trace) => (
+                    <div className="ses-detail" key={trace.trace_id}>
+                      <p>{trace.name}</p>
+                      <p className="muted mono">{trace.trace_id}</p>
+                    </div>
+                  ))
+                : null}
+            </li>
+          ))}
+        </ol>
+      </section>
+    </div>
+  );
+}
+
 function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void }) {
   const [tenant, setTenant] = useState("");
   const [profile, setProfile] = useState("");
@@ -491,6 +607,10 @@ function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void 
     [String(stats?.profiles ?? "—"), "Profiles", "named + default"],
     [String(stats?.tenants ?? "—"), "Tenants", "federated"],
   ];
+  const phoenixProjects = doc.phoenix?.projects ?? [];
+  if (phoenixProjects.length) {
+    return <SpanSessions projects={phoenixProjects} note={doc.note || ""} onRefresh={onRefresh} />;
+  }
 
   return (
     <div className="cog-page">
@@ -775,6 +895,7 @@ function Settings({
   onTheme,
   onBrand,
   onSample,
+  onSnapshot,
 }: {
   workspace: Workspace | null;
   busy: boolean;
@@ -782,6 +903,7 @@ function Settings({
   onTheme: (dark: boolean) => void;
   onBrand: (brandId: string) => void;
   onSample: (enabled: boolean) => void;
+  onSnapshot: (file: File) => void;
 }) {
   return (
     <section className="page">
@@ -837,6 +959,24 @@ function Settings({
           onCheckedChange={onSample}
         />
         <p className="muted">Snapshot {workspace?.snapshot_s3_uri}</p>
+      </section>
+      <section className="settings-card">
+        <h2>Snapshot upload</h2>
+        <p className="muted">
+          Load a signals-snapshot archive. Span records stay readable here when Phoenix is not running.
+          {workspace?.loaded_snapshot_id ? ` Loaded ${workspace.loaded_snapshot_id}.` : ""}
+        </p>
+        <input
+          className="ses-search"
+          type="file"
+          accept=".tar.gz,.tgz,application/gzip"
+          aria-label="signals-snapshot archive"
+          disabled={busy}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) onSnapshot(file);
+          }}
+        />
       </section>
     </section>
   );

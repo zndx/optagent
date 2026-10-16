@@ -76,6 +76,8 @@ def directory_from_snapshot(snapshot: dict) -> dict:
             }
         )
     for member in snapshot.get("members") or []:
+        if str(member.get("kind") or "") == "spans":
+            continue
         tenant = str(member.get("project") or "workspace")
         kind = str(member.get("kind") or "unknown")
         display = str(member.get("name") or "agent")
