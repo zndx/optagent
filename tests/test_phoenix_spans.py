@@ -8,7 +8,16 @@ from pathlib import Path
 
 import pytest
 
-from optagent.phoenix_spans import activity_points, index_spans, make_span, session_id, trace_id_for, write_jsonl
+from optagent.phoenix_spans import (
+    activity_points,
+    make_span,
+    session_catalog,
+    session_id,
+    session_traces,
+    trace_detail,
+    trace_id_for,
+    write_jsonl,
+)
 from optagent.snapshot_store import install_archive
 
 
@@ -44,9 +53,31 @@ def test_one_thought_is_one_trace_and_the_project_is_on_the_resource() -> None:
     assert span["attributes"]["session.id"] == "gaius:cognition:cycle-1"
     assert span["attributes"]["gaius.activity"] == "cognition"
     assert span["attributes"]["gaius.thought.id"] == "thought-9"
-    indexed = index_spans([span])
-    assert indexed["projects"][0]["name"] == "gaius"
-    assert indexed["projects"][0]["sessions"][0]["traces"][0]["name"] == "curiosity"
+    other = make_span(
+        project="gaius",
+        session=session_id("gaius", "cognition", "cycle-1"),
+        name="later",
+        activity="cognition",
+        capability="cognition",
+        service_name="gaius-engine",
+        trace_key="thought-10",
+        start_time_unix_nano=2_000_000_000_000_000,
+        output_value="second body",
+    )
+    catalog = session_catalog([span, other], ["signals", "gaius"])
+    assert catalog["projects"][:2] == ["signals", "gaius"]
+    row = catalog["sessions"][0]
+    assert row["id"] == "gaius:cognition:cycle-1"
+    assert row["trace_count"] == 2
+    assert row["name"] == "later"
+    assert "output.value" not in row
+    traces = session_traces([span, other], row["id"])
+    assert traces is not None
+    assert "output" not in traces["traces"][0]
+    detail = trace_detail([span, other], span["trace_id"])
+    assert detail is not None
+    assert detail["output"] == "The thought body."
+    assert detail["attributes"]["gaius.thought.type"] == "curiosity"
 
 
 def test_activity_points_keep_time_and_drop_trace_bodies() -> None:

@@ -715,14 +715,17 @@ def _sessions_origin(runtime) -> dict:
 
     from pathlib import Path
 
-    from optagent.phoenix_spans import index_spans, load_member_spans
+    from optagent.phoenix_spans import session_catalog
     from optagent.sessions import directory_from_snapshot
 
     origin = _origin_snapshot(runtime)
     document = directory_from_snapshot(origin)
-    root = Path(str(origin.get("location") or "")).parent
-    spans = load_member_spans(root, origin["members"]) if root.is_dir() else []
-    document["phoenix"] = index_spans(spans)
+    projects: list[str] = []
+    for member in origin.get("members") or []:
+        name = str(member.get("project") or "")
+        if name and name not in projects:
+            projects.append(name)
+    document["phoenix"] = session_catalog(_loaded_spans(runtime), projects)
     return document
 
 
@@ -812,6 +815,19 @@ def response_for(
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", _sessions_origin)).encode(), extra
     if parsed.path == "/api/optagent/v1/activity":
         return 200, "application/json; charset=utf-8", json.dumps(_activity(runtime)).encode(), extra
+    if parsed.path in {"/api/optagent/v1/session", "/api/optagent/v1/trace"}:
+        from optagent.phoenix_spans import session_traces, trace_detail
+
+        query = urllib.parse.parse_qs(parsed.query)
+        wanted = (query.get("id") or [""])[0]
+        spans = _loaded_spans(runtime)
+        if parsed.path.endswith("/session"):
+            found = session_traces(spans, wanted)
+        else:
+            found = trace_detail(spans, wanted)
+        if found is None:
+            return 404, "application/json; charset=utf-8", b'{"error":"not found"}\n', extra
+        return 200, "application/json; charset=utf-8", json.dumps(found).encode(), extra
     document = _cached_snapshot(runtime) if enabled else None
     view = {
         "sample_mode": enabled,

@@ -48,9 +48,27 @@ type AgentSession = {
   preview: string;
 };
 
-type PhoenixTrace = { trace_id?: string; name?: string; attributes?: Record<string, string | number> };
-type PhoenixSession = { id: string; activity?: string; traces: PhoenixTrace[] };
-type PhoenixProject = { name: string; sessions: PhoenixSession[] };
+type ExplorerSession = {
+  id: string;
+  project: string;
+  activity: string;
+  name: string;
+  t0: number;
+  t1: number;
+  trace_count: number;
+};
+type ExplorerTrace = { trace_id: string; name: string; t: number; span_kind: string };
+type TraceDetail = {
+  trace_id: string;
+  name: string;
+  project: string;
+  session: string;
+  activity: string;
+  span_kind: string;
+  input: string;
+  output: string;
+  attributes: Record<string, string | number>;
+};
 
 type SessionsDoc = {
   note?: string;
@@ -58,7 +76,7 @@ type SessionsDoc = {
   tenants?: { id: string; display_name: string }[];
   profiles?: AgentProfile[];
   sessions?: AgentSession[];
-  phoenix?: { projects?: PhoenixProject[] };
+  phoenix?: { projects?: string[]; sessions?: ExplorerSession[] };
   stats?: {
     total: number;
     active: number;
@@ -764,39 +782,87 @@ const SESSION_CATEGORIES = [
   ["all", "All"],
 ] as const;
 
-function SpanSessions({
-  projects,
-  note,
-  onRefresh,
-}: {
-  projects: PhoenixProject[];
-  note: string;
-  onRefresh: () => void;
-}) {
-  const [project, setProject] = useState(projects[0]?.name ?? "");
+function formatStamp(ms: number): string {
+  if (!ms) return "";
+  return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
+}
+
+function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void }) {
+  const projects = doc.phoenix?.projects ?? [];
+  const allSessions = doc.phoenix?.sessions ?? [];
+  const [project, setProject] = useState("");
   const [activity, setActivity] = useState("");
-  const [openId, setOpenId] = useState<string | null>(null);
-  const current = projects.find((item) => item.name === project) ?? projects[0];
-  const sessions = (current?.sessions ?? []).filter((item) => !activity || item.activity === activity);
-  const activities = [...new Set((current?.sessions ?? []).map((item) => item.activity || "").filter(Boolean))];
+  const [windowId, setWindowId] = useState("365d");
+  const [query, setQuery] = useState("");
+  const [sessionId, setSessionId] = useState("");
+  const [traces, setTraces] = useState<ExplorerTrace[]>([]);
+  const [traceId, setTraceId] = useState("");
+  const [detail, setDetail] = useState<TraceDetail | null>(null);
+  const now = Date.now();
+  const earliest = allSessions.reduce((min, item) => Math.min(min, item.t0 || now), now);
+  const start = windowId === "all" ? earliest : now - (WINDOW_MS[windowId] ?? WINDOW_MS["365d"]);
+  const needle = query.trim().toLowerCase();
+  const scoped = allSessions.filter((item) => {
+    if (project && item.project !== project) return false;
+    if (item.t1 < start || (item.t0 && item.t0 > now)) return false;
+    return true;
+  });
+  const activities = [...new Set(scoped.map((item) => item.activity).filter(Boolean))].sort();
+  const visible = scoped.filter((item) => {
+    if (activity && item.activity !== activity) return false;
+    if (!needle) return true;
+    return `${item.name} ${item.id}`.toLowerCase().includes(needle);
+  });
+  useEffect(() => {
+    if (!sessionId) {
+      setTraces([]);
+      setTraceId("");
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`/api/optagent/v1/session?id=${encodeURIComponent(sessionId)}`, { signal: controller.signal })
+      .then((response) => response.json())
+      .then((data: { traces?: ExplorerTrace[] }) => {
+        const next = data.traces ?? [];
+        setTraces(next);
+        setTraceId(next[0]?.trace_id ?? "");
+      })
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [sessionId]);
+  useEffect(() => {
+    if (!traceId) {
+      setDetail(null);
+      return;
+    }
+    const controller = new AbortController();
+    fetch(`/api/optagent/v1/trace?id=${encodeURIComponent(traceId)}`, { signal: controller.signal })
+      .then((response) => response.json())
+      .then((data: TraceDetail) => setDetail(data))
+      .catch(() => undefined);
+    return () => controller.abort();
+  }, [traceId]);
+  const traceNeedle = needle;
+  const shownTraces = traces.filter((item) => !traceNeedle || item.name.toLowerCase().includes(traceNeedle)).slice(0, 200);
   return (
     <div className="cog-page">
-      <aside className="cog-rail" aria-label="Phoenix projects">
+      <aside className="cog-rail" aria-label="Sessions">
         <div className="cog-rail-head">
-          <span className="cog-kicker">{sessions.length} SESSIONS</span>
+          <span className="cog-kicker">{visible.length} SESSIONS</span>
           <select
             className="cog-select"
             aria-label="Project"
-            value={current?.name ?? ""}
+            value={project}
             onChange={(event) => {
               setProject(event.target.value);
               setActivity("");
-              setOpenId(null);
+              setSessionId("");
             }}
           >
-            {projects.map((item) => (
-              <option key={item.name} value={item.name}>
-                {item.name}
+            <option value="">All projects</option>
+            {projects.map((name) => (
+              <option key={name} value={name}>
+                {name} · {allSessions.filter((item) => item.project === name).length}
               </option>
             ))}
           </select>
@@ -807,51 +873,97 @@ function SpanSessions({
               <div className="cog-rail-title">All activity</div>
             </button>
           </li>
-          {activities.map((item) => (
-            <li key={item}>
+          {activities.map((name) => (
+            <li key={name}>
+              <button type="button" className={activity === name ? "cog-rail-item active" : "cog-rail-item"} onClick={() => setActivity(name)}>
+                <div className="cog-rail-title">{name}</div>
+                <div className="cog-rail-meta">
+                  <span className="cog-type">{name.toUpperCase()}</span>
+                  <span className="muted">{scoped.filter((item) => item.activity === name).length}</span>
+                </div>
+              </button>
+            </li>
+          ))}
+          {visible.map((item) => (
+            <li key={item.id}>
               <button
                 type="button"
-                className={activity === item ? "cog-rail-item active" : "cog-rail-item"}
-                onClick={() => setActivity(item)}
+                className={sessionId === item.id ? "cog-rail-item active" : "cog-rail-item"}
+                onClick={() => setSessionId(item.id)}
               >
-                <div className="cog-rail-title">{item}</div>
+                <div className="cog-rail-title">{item.name || item.id}</div>
+                <div className="cog-rail-meta">
+                  <span className="muted">{formatStamp(item.t1)}</span>
+                  <span className="cog-type">{item.trace_count}</span>
+                </div>
               </button>
             </li>
           ))}
         </ul>
-        <div className="cog-rail-foot mono muted">federation.project=optagent</div>
+        <div className="cog-rail-foot mono muted">signals-snapshot · {projects.length} projects</div>
       </aside>
       <section className="cog-main">
         <div className="cog-toolbar">
-          <button type="button" className="btn" onClick={onRefresh}>
-            Refresh
-          </button>
-          <span className="pill">{current?.name ?? "project"}</span>
+          <label className="cog-toolbar-label">
+            Window
+            <select className="cog-select" aria-label="Window" value={windowId} onChange={(event) => setWindowId(event.target.value)}>
+              {WINDOWS.map(([value, label]) => (
+                <option key={value} value={value}>{label}</option>
+              ))}
+            </select>
+          </label>
+          <input
+            className="ses-search"
+            type="search"
+            placeholder="Search sessions"
+            aria-label="Search sessions"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          <button type="button" className="btn" onClick={onRefresh}>Refresh</button>
         </div>
-        <p className="muted cog-empty">{note || "Spans from the loaded signals-snapshot. Phoenix is not required."}</p>
-        <ol className="cog-top">
-          {sessions.map((item) => (
-            <li key={item.id}>
-              <button
-                type="button"
-                className={openId === item.id ? "ses-row open" : "ses-row"}
-                onClick={() => setOpenId(openId === item.id ? null : item.id)}
-              >
-                <span className="cog-top-title">{item.id}</span>
-                <span className="muted cog-top-sub">{item.traces.length} traces</span>
-                <span className="cog-top-score">{item.activity}</span>
-              </button>
-              {openId === item.id
-                ? item.traces.map((trace) => (
-                    <div className="ses-detail" key={trace.trace_id}>
-                      <p>{trace.name}</p>
-                      <p className="muted mono">{trace.trace_id}</p>
+        <div className="cog-split ses-explorer">
+          <div className="cog-panel ses-trace-list">
+            <div className="cog-panel-head">
+              <h2>{sessionId ? "Traces" : "Session"}</h2>
+              <span className="muted">{sessionId ? `${shownTraces.length} of ${traces.length}` : "Choose a session"}</span>
+            </div>
+            {shownTraces.length === 0 ? <p className="muted cog-empty">No trace is open.</p> : null}
+            <ul className="cog-rail-list">
+              {shownTraces.map((item) => (
+                <li key={item.trace_id}>
+                  <button
+                    type="button"
+                    className={traceId === item.trace_id ? "cog-rail-item active" : "cog-rail-item"}
+                    onClick={() => setTraceId(item.trace_id)}
+                  >
+                    <div className="cog-rail-title">{item.name || item.trace_id}</div>
+                    <div className="cog-rail-meta">
+                      <span className="muted">{formatStamp(item.t)}</span>
+                      <span className="cog-type">{item.span_kind}</span>
                     </div>
-                  ))
-                : null}
-            </li>
-          ))}
-        </ol>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <article className="sum-panel ses-read">
+            <header className="sum-panel-head">
+              <h2>{detail?.name || "Trace"}</h2>
+              <span className="muted sum-panel-meta">
+                {[detail?.span_kind, detail?.activity, detail?.attributes?.["llm.model_name"], detail?.attributes?.["llm.token_count.total"]]
+                  .filter((part) => part !== undefined && part !== "")
+                  .join(" · ")}
+              </span>
+            </header>
+            <div className="sum-panel-body">
+              <h3>Input</h3>
+              <div className="rich-body">{detail?.input || "—"}</div>
+              <h3>Output</h3>
+              <div className="rich-body">{detail?.output || "—"}</div>
+            </div>
+          </article>
+        </div>
       </section>
     </div>
   );
@@ -887,9 +999,9 @@ function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void 
     [String(stats?.profiles ?? "—"), "Profiles", "named + default"],
     [String(stats?.tenants ?? "—"), "Tenants", "federated"],
   ];
-  const phoenixProjects = doc.phoenix?.projects ?? [];
-  if (phoenixProjects.length) {
-    return <SpanSessions projects={phoenixProjects} note={doc.note || ""} onRefresh={onRefresh} />;
+  const phoenixSessions = doc.phoenix?.sessions ?? [];
+  if (phoenixSessions.length || (doc.phoenix?.projects ?? []).length) {
+    return <SpanSessions doc={doc} onRefresh={onRefresh} />;
   }
 
   return (

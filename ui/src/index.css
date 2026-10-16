@@ -364,6 +364,11 @@ button.cog-rail-item {
 .ses-row .cog-top-sub { grid-column: 1; }
 .ses-row .cog-top-score { grid-row: 1 / span 2; align-self: center; }
 .ses-row.open { box-shadow: inset 2px 0 0 var(--color-kumo-success); }
+.ses-explorer { align-items: stretch; min-height: 0; }
+.ses-trace-list { display: flex; flex-direction: column; min-height: 0; max-height: calc(100vh - 160px); }
+.ses-trace-list .cog-rail-list { flex: 1; }
+.ses-read { flex: 1.2; max-height: calc(100vh - 160px); }
+.ses-read h3 { margin: 0.8rem 0 0.25rem; font-size: 0.78rem; letter-spacing: 0.04em; color: var(--text-color-kumo-subtle); }
 .ses-detail { padding: 0.35rem 0 0.75rem; font-size: 0.84rem; line-height: 1.45; }
 .ses-detail p { margin: 0.25rem 0; }
 .cog-rail-title {

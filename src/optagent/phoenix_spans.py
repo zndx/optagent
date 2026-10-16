@@ -240,36 +240,102 @@ def activity_points(spans: list[dict]) -> list[dict]:
     return points
 
 
-def index_spans(spans: list[dict]) -> dict:
-    """Projects, then sessions, then traces. This is what the Sessions page reads."""
+def _span_identity(span: dict) -> tuple[str, str, str, dict]:
+    resource = span.get("resource") if isinstance(span.get("resource"), dict) else {}
+    attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
+    project = str(resource.get("openinference.project.name") or attributes.get("openinference.project.name") or "")
+    session = str(attributes.get("session.id") or "")
+    activity = str(
+        attributes.get(f"{project}.activity")
+        or attributes.get("gaius.activity")
+        or attributes.get("metabase.activity")
+        or ""
+    )
+    return project, session, activity, attributes
 
-    projects: dict[str, dict] = {}
+
+def session_catalog(spans: list[dict], projects: list[str] | None = None) -> dict:
+    """Session index for the explorer. Trace bodies are not included."""
+
+    found: dict[str, dict] = {}
     for span in spans:
-        resource = span.get("resource") if isinstance(span.get("resource"), dict) else {}
-        attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
-        project = str(resource.get("openinference.project.name") or attributes.get("openinference.project.name") or "")
-        sid = str(attributes.get("session.id") or "")
+        project, sid, activity, _attributes = _span_identity(span)
         if not project or not sid.startswith(f"{project}:"):
             continue
-        bucket = projects.setdefault(project, {})
-        session = bucket.setdefault(
-            sid,
-            {
+        stamp = int(span.get("start_time_unix_nano") or 0) // 1_000_000
+        row = found.get(sid)
+        if row is None:
+            found[sid] = {
                 "id": sid,
-                "activity": attributes.get(f"{project}.activity") or attributes.get("gaius.activity") or attributes.get("metabase.activity") or "",
-                "traces": [],
-            },
-        )
-        session["traces"].append(
+                "project": project,
+                "activity": activity,
+                "name": str(span.get("name") or "")[:160],
+                "t0": stamp,
+                "t1": stamp,
+                "trace_count": 1,
+            }
+            continue
+        row["trace_count"] += 1
+        row["t0"] = min(int(row["t0"]), stamp)
+        if stamp >= int(row["t1"]):
+            row["t1"] = stamp
+            if span.get("name"):
+                row["name"] = str(span["name"])[:160]
+    names = list(projects or [])
+    for row in found.values():
+        if row["project"] not in names:
+            names.append(row["project"])
+    sessions = sorted(found.values(), key=lambda item: (-int(item["t1"]), item["id"]))
+    return {"projects": names, "sessions": sessions}
+
+
+def session_traces(spans: list[dict], session_id: str) -> dict | None:
+    """Names and times for one session. No input or output."""
+
+    traces = []
+    for span in spans:
+        _project, sid, _activity, attributes = _span_identity(span)
+        if sid != session_id:
+            continue
+        traces.append(
             {
                 "trace_id": span.get("trace_id"),
-                "name": span.get("name"),
-                "attributes": attributes,
+                "name": span.get("name") or "",
+                "t": int(span.get("start_time_unix_nano") or 0) // 1_000_000,
+                "span_kind": str(attributes.get("openinference.span.kind") or ""),
             }
         )
-    listed = []
-    for name in sorted(projects):
-        sessions = list(projects[name].values())
-        sessions.sort(key=lambda item: item["id"])
-        listed.append({"name": name, "sessions": sessions})
-    return {"projects": listed}
+    if not traces:
+        return None
+    traces.sort(key=lambda item: (-int(item["t"]), str(item["trace_id"])))
+    return {"id": session_id, "traces": traces}
+
+
+def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
+    """One trace body. The explorer asks for this after a row is chosen."""
+
+    small_keys = (
+        "gaius.thought.type",
+        "gaius.thought.id",
+        "llm.model_name",
+        "llm.token_count.total",
+        "metabase.question.id",
+        "user.id",
+    )
+    for span in spans:
+        if str(span.get("trace_id") or "") != trace_id:
+            continue
+        project, sid, activity, attributes = _span_identity(span)
+        small = {key: attributes[key] for key in small_keys if attributes.get(key) not in (None, "")}
+        return {
+            "trace_id": trace_id,
+            "name": span.get("name") or "",
+            "project": project,
+            "session": sid,
+            "activity": activity,
+            "span_kind": str(attributes.get("openinference.span.kind") or ""),
+            "input": attributes.get("input.value") or "",
+            "output": attributes.get("output.value") or "",
+            "attributes": small,
+        }
+    return None
