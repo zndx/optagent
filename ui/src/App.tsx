@@ -1,4 +1,4 @@
-import { Switch } from "@cloudflare/kumo";
+import { Select, Switch } from "@cloudflare/kumo";
 import { useEffect, useState } from "react";
 
 import { applyColorMode, type ColorMode } from "./theme/colorMode";
@@ -1327,17 +1327,19 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
     <div className="sum-page">
       <aside className="sum-rail" aria-label="Summary lineup">
         <div className="sum-group">
-          <div className="sum-group-title">ROOTS</div>
-          {view.roots.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={root === item.id ? "sum-tab active" : "sum-tab"}
-              onClick={() => setRoot(item.id)}
-            >
-              {item.title}
-            </button>
-          ))}
+          <div className="sum-group-title">SECTION</div>
+          <Select
+            aria-label="Section"
+            size="sm"
+            value={root}
+            onValueChange={(value) => {
+              if (value) setRoot(String(value));
+            }}
+            items={["archive", "current", "scratch"].map((id) => ({
+              value: id,
+              label: id.charAt(0).toUpperCase() + id.slice(1),
+            }))}
+          />
         </div>
         <div className="sum-group">
           <div className="sum-group-title">LEXICON</div>
