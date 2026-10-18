@@ -205,8 +205,70 @@ def metabase_spans(database_url: str) -> tuple[list[dict], dict]:
     return spans, watermark
 
 
+def _assignment_iri(item: dict) -> str:
+    return str(item.get("iri") or item.get("sdg.iri") or "").strip()
+
+
+def _assignment_confidence(item: dict):
+    if "confidence" in item and item.get("confidence") is not None:
+        return item.get("confidence")
+    return item.get("semantica.confidence")
+
+
+def _join_entities(prior: str, iris: list[str]) -> str:
+    seen: list[str] = []
+    for part in (prior or "").split(","):
+        part = part.strip()
+        if part and part not in seen:
+            seen.append(part)
+    for iri in iris:
+        if iri and iri not in seen:
+            seen.append(iri)
+    return ",".join(seen)
+
+
+def _spans_from_link(link: dict) -> list[dict]:
+    """Every system-one assignment. A declined genus (no child IRI) adds nothing."""
+
+    assignments = link.get("assignments")
+    spans: list[dict] = []
+    if isinstance(assignments, list) and assignments:
+        for item in assignments:
+            if not isinstance(item, dict):
+                continue
+            iri = _assignment_iri(item)
+            if not iri:
+                continue
+            span = {
+                "start": int(item.get("start") or 0),
+                "end": int(item.get("end") or 0),
+                "text": str(item.get("text") or ""),
+                "iri": iri,
+                "label": str(item.get("label") or ""),
+            }
+            confidence = _assignment_confidence(item)
+            if confidence is not None:
+                span["confidence"] = confidence
+            spans.append(span)
+        return spans
+    iri = str(link.get("sdg.iri") or "").strip()
+    if not iri:
+        return []
+    span = {
+        "start": int(link.get("start") or 0),
+        "end": int(link.get("end") or 0),
+        "text": str(link.get("text") or ""),
+        "iri": iri,
+        "label": str(link.get("genus_label") or ""),
+    }
+    confidence = link.get("semantica.confidence")
+    if confidence is not None:
+        span["confidence"] = confidence
+    return [span]
+
+
 def _stamp_sdg(attributes: dict, raw: str | None) -> None:
-    """Copy aperture links. Confidence is kept only when a child IRI came back."""
+    """Copy every grounded span. The first genus link still fills aegir.*."""
 
     if not raw:
         return
@@ -217,23 +279,30 @@ def _stamp_sdg(attributes: dict, raw: str | None) -> None:
     links = loaded.get("links") if isinstance(loaded, dict) else None
     if not isinstance(links, list) or not links:
         return
-    link = next((item for item in links if isinstance(item, dict) and item.get("genus_iri")), None)
-    if link is None:
+    genus = next((item for item in links if isinstance(item, dict) and item.get("genus_iri")), None)
+    if genus is not None:
+        attributes["aegir.genus_iri"] = str(genus.get("genus_iri") or "")
+        attributes["aegir.genus_code"] = str(genus.get("genus_code") or "")
+        attributes["aegir.start"] = int(genus.get("start") or 0)
+        attributes["aegir.end"] = int(genus.get("end") or 0)
+        if genus.get("rel_margin_h") is not None:
+            attributes["aegir.rel_margin_h"] = genus.get("rel_margin_h")
+        if genus.get("tau") is not None:
+            attributes["aegir.tau"] = genus.get("tau")
+    grounded: list[dict] = []
+    for link in links:
+        if isinstance(link, dict):
+            grounded.extend(_spans_from_link(link))
+    if not grounded:
         return
-    attributes["aegir.genus_iri"] = str(link.get("genus_iri") or "")
-    attributes["aegir.genus_code"] = str(link.get("genus_code") or "")
-    attributes["aegir.start"] = int(link.get("start") or 0)
-    attributes["aegir.end"] = int(link.get("end") or 0)
-    if link.get("rel_margin_h") is not None:
-        attributes["aegir.rel_margin_h"] = link.get("rel_margin_h")
-    if link.get("tau") is not None:
-        attributes["aegir.tau"] = link.get("tau")
-    child = str(link.get("sdg.iri") or "")
-    if child:
-        prior = str(attributes.get("semantica.entities") or "")
-        attributes["semantica.entities"] = ",".join(part for part in (prior, child) if part)
-        if link.get("semantica.confidence") is not None:
-            attributes["semantica.confidence"] = link.get("semantica.confidence")
+    attributes["sdg.spans"] = grounded
+    attributes["semantica.entities"] = _join_entities(
+        str(attributes.get("semantica.entities") or ""),
+        [str(item["iri"]) for item in grounded],
+    )
+    first = grounded[0].get("confidence")
+    if first is not None:
+        attributes["semantica.confidence"] = first
 
 
 def hermes_spans(db_path: str) -> tuple[list[dict], dict]:

@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import importlib.util
+import json
 import sqlite3
 from pathlib import Path
 
@@ -84,4 +85,95 @@ def test_hermes_messages_keep_their_timestamps_and_reasoning(tmp_path: Path) -> 
     assert assistant["attributes"]["aegir.start"] == 0
     assert assistant["attributes"]["aegir.end"] == 5
     assert "semantica.confidence" not in assistant["attributes"]
+    assert "sdg.spans" not in assistant["attributes"]
     assert "output.value" not in assistant["resource"]
+    with sqlite3.connect(db) as conn:
+        conn.execute(
+        "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            3,
+            "agent-rtc-4fcf",
+            "assistant",
+            "The specimen is accessioned. The assay is run on a named instrument.",
+            "",
+            1_700_000_002.0,
+            20,
+            1,
+            json.dumps(
+                {
+                    "links": [
+                        {
+                            "start": 0,
+                            "end": 120,
+                            "genus_iri": "https://signals.zndx.org/sdg#LIMS",
+                            "genus_code": "16.2",
+                            "genus_label": "Laboratory Information Management",
+                            "rel_margin_h": 0.22,
+                            "tau": 0.1,
+                            "sdg.iri": "https://signals.zndx.org/sdg#LIMS_SPECIMEN_LIFECYCLE",
+                            "semantica.confidence": 0.98,
+                            "assignments": [
+                                {
+                                    "start": 0,
+                                    "end": 77,
+                                    "text": "The specimen is collected from the patient, received, and accessioned under a",
+                                    "iri": "https://signals.zndx.org/sdg#LIMS_SPECIMEN_LIFECYCLE",
+                                    "label": "Specimen Lifecycle Management",
+                                    "confidence": 0.98,
+                                },
+                                {
+                                    "start": 80,
+                                    "end": 120,
+                                    "text": "The assay is run on a named instrument.",
+                                    "iri": "https://signals.zndx.org/sdg#LIMS_ASSAY_EXECUTION",
+                                    "label": "Assay Execution",
+                                    "confidence": 0.91,
+                                },
+                            ],
+                        },
+                        {
+                            "start": 200,
+                            "end": 240,
+                            "genus_iri": "https://signals.zndx.org/sdg#LIMS",
+                            "genus_code": "16.2",
+                            "rel_margin_h": 0.05,
+                            "tau": 0.1,
+                        },
+                    ],
+                    "text_len": 120,
+                }
+            ),
+        ),
+        )
+    spans, _mark = _harvest().hermes_spans(str(db))
+    grounded = spans[-1]["attributes"]
+    assert grounded["aegir.genus_iri"] == "https://signals.zndx.org/sdg#LIMS"
+    assert grounded["aegir.genus_code"] == "16.2"
+    assert grounded["aegir.start"] == 0
+    assert grounded["aegir.end"] == 120
+    iris = [item["iri"] for item in grounded["sdg.spans"]]
+    assert iris == [
+        "https://signals.zndx.org/sdg#LIMS_SPECIMEN_LIFECYCLE",
+        "https://signals.zndx.org/sdg#LIMS_ASSAY_EXECUTION",
+    ]
+    assert grounded["sdg.spans"][0]["start"] == 0
+    assert grounded["sdg.spans"][0]["end"] == 77
+    assert grounded["sdg.spans"][1]["start"] == 80
+    assert "LIMS_SPECIMEN_LIFECYCLE" in grounded["semantica.entities"]
+    assert "LIMS_ASSAY_EXECUTION" in grounded["semantica.entities"]
+    assert grounded["semantica.entities"].count("LIMS_SPECIMEN_LIFECYCLE") == 1
+    assert grounded["semantica.confidence"] == 0.98
+    dest = tmp_path / "signals-snapshot" / "fixture"
+    archive = _harvest().build_archive(
+        dest,
+        "postgresql://127.0.0.1:1/optagent?connect_timeout=1",
+        "postgresql://127.0.0.1:1/metabase?connect_timeout=1",
+        str(db),
+    )
+    written = json.loads((dest / "projects" / "hermes" / "spans.jsonl").read_text().splitlines()[-1])
+    document = json.loads((dest / "signals-snapshot.json").read_text())
+    assert document["format"] == "signals-snapshot"
+    assert written["attributes"]["sdg.spans"][1]["iri"].endswith("LIMS_ASSAY_EXECUTION")
+    assert written["attributes"]["sdg.spans"][0]["start"] == 0
+    assert written["attributes"]["sdg.spans"][0]["end"] == 77
+    assert archive.is_file()

@@ -331,6 +331,7 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
         "aegir.genus_code",
         "aegir.genus_iri",
         "sdg.iri",
+        "sdg.spans",
     )
     for span in spans:
         if str(span.get("trace_id") or "") != trace_id:
