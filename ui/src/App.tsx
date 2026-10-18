@@ -53,6 +53,30 @@ type LineupSessionItem = {
   generated_at: number;
   augmented_at: number | null;
 };
+type TraceStats = {
+  traces: number;
+  sessions: number;
+  tokens: number;
+  grounded: number;
+  augmented: number;
+  latency_ms: number | null;
+  total_cost: number | null;
+  errors: number | null;
+  top_iris?: { iri: string; count: number }[];
+  top_sessions?: { id: string; project: string; traces: number }[];
+  undomain?: number;
+};
+type TimelineDomain = TraceStats & { code: string; iri: string };
+type TimelineBin = TraceStats & { start: number; end: number; domains: TimelineDomain[] };
+type TimelineDoc = {
+  window: string;
+  unit: string;
+  start: number;
+  end: number;
+  totals: TraceStats;
+  domains: TimelineDomain[];
+  bins: TimelineBin[];
+};
 type LineupDoc = {
   pin: string;
   checkout?: string;
@@ -62,6 +86,7 @@ type LineupDoc = {
   lexicon: LineupConcept[];
   schema: LineupTable[];
   tracing: { window: string; projects: TracingProject[] };
+  timeline?: TimelineDoc;
   sessions: { id: string; traces: number; items: LineupSessionItem[] }[];
   published: string[];
 };
@@ -1327,44 +1352,88 @@ function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void 
 
 type TrailStop =
   | { kind: "root"; id: string }
+  | { kind: "timeline" }
+  | { kind: "trends" }
+  | { kind: "bin"; start: number; end: number }
+  | { kind: "domain"; code: string; start: number; end: number }
   | { kind: "lexicon"; iri: string }
   | { kind: "schema"; name: string }
   | { kind: "tracing"; project: string }
-  | { kind: "session"; id: string };
+  | { kind: "session"; id: string; project?: string };
 
 const TRAIL_STORAGE = "optagent:summary-trail";
 const ROOT_TITLES: Record<string, string> = { archive: "ARCHIVE", current: "CURRENT", scratch: "SCRATCH" };
 
 function trailKey(stop: TrailStop): string {
   if (stop.kind === "root") return `root:${stop.id}`;
+  if (stop.kind === "timeline") return "timeline";
+  if (stop.kind === "trends") return "trends";
+  if (stop.kind === "bin") return `bin:${stop.start}:${stop.end}`;
+  if (stop.kind === "domain") return `domain:${stop.code}:${stop.start}:${stop.end}`;
   if (stop.kind === "lexicon") return `lexicon:${stop.iri}`;
   if (stop.kind === "schema") return `schema:${stop.name}`;
   if (stop.kind === "tracing") return `tracing:${stop.project}`;
-  return `session:${stop.id}`;
+  return `session:${stop.project || ""}:${stop.id}`;
 }
 
 function isTrailStop(value: unknown): value is TrailStop {
   if (!value || typeof value !== "object") return false;
   const stop = value as TrailStop;
   if (stop.kind === "root") return stop.id === "archive" || stop.id === "current" || stop.id === "scratch";
+  if (stop.kind === "timeline" || stop.kind === "trends") return true;
+  if (stop.kind === "bin") return Number.isFinite(stop.start) && Number.isFinite(stop.end) && stop.end > stop.start;
+  if (stop.kind === "domain") {
+    return typeof stop.code === "string" && stop.code.length > 0 && !stop.code.includes("|")
+      && Number.isFinite(stop.start) && Number.isFinite(stop.end) && stop.end > stop.start;
+  }
   if (stop.kind === "lexicon") return typeof stop.iri === "string" && stop.iri.startsWith("https://signals.zndx.org/sdg#");
   if (stop.kind === "schema") return typeof stop.name === "string" && stop.name.length > 0 && !stop.name.includes("/");
   if (stop.kind === "tracing") return typeof stop.project === "string" && stop.project.length > 0;
-  if (stop.kind === "session") return typeof stop.id === "string" && stop.id.length > 0;
+  if (stop.kind === "session") {
+    return typeof stop.id === "string" && stop.id.length > 0 && (stop.project === undefined || typeof stop.project === "string");
+  }
   return false;
 }
 
+function finitePair(start: string, end: string): { start: number; end: number } | null {
+  const left = Number(start);
+  const right = Number(end);
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right <= left) return null;
+  return { start: left, end: right };
+}
+
 function openToken(stop: TrailStop): string | null {
+  if (stop.kind === "timeline") return "timeline";
+  if (stop.kind === "trends") return "trends";
+  if (stop.kind === "bin") return `bin|${stop.start}|${stop.end}`;
+  if (stop.kind === "domain") return `domain|${stop.code}|${stop.start}|${stop.end}`;
   if (stop.kind === "lexicon") return stop.iri;
   if (stop.kind === "schema") return `schema:${stop.name}`;
-  if (stop.kind === "session") return `session:${stop.id}`;
+  if (stop.kind === "session") return stop.project ? `session|${stop.project}|${stop.id}` : `session:${stop.id}`;
   if (stop.kind === "tracing") return `tracing:${stop.project}`;
   return null;
 }
 
 function stopFromToken(token: string): TrailStop | null {
+  if (token === "timeline") return { kind: "timeline" };
+  if (token === "trends") return { kind: "trends" };
+  if (token.startsWith("bin|")) {
+    const pair = finitePair(token.split("|")[1] || "", token.split("|")[2] || "");
+    return pair ? { kind: "bin", ...pair } : null;
+  }
+  if (token.startsWith("domain|")) {
+    const parts = token.split("|");
+    const pair = finitePair(parts[2] || "", parts[3] || "");
+    if (!parts[1] || !pair) return null;
+    return { kind: "domain", code: parts[1], ...pair };
+  }
   if (token.startsWith("https://signals.zndx.org/sdg#")) return { kind: "lexicon", iri: token };
   if (token.startsWith("schema:")) return { kind: "schema", name: token.slice("schema:".length) };
+  if (token.startsWith("session|")) {
+    const parts = token.split("|");
+    if (!parts[1] || !parts[2]) return null;
+    return { kind: "session", project: parts[1], id: parts.slice(2).join("|") };
+  }
   if (token.startsWith("session:")) return { kind: "session", id: token.slice("session:".length) };
   if (token.startsWith("tracing:")) return { kind: "tracing", project: token.slice("tracing:".length) };
   return null;
@@ -1390,8 +1459,12 @@ function loadStoredTrail(): { root: string; trail: TrailStop[] } | null {
 }
 
 function projectFromTrail(stops: TrailStop[]): string {
-  const tracing = stops.find((stop) => stop.kind === "tracing");
-  return tracing && tracing.kind === "tracing" ? tracing.project : "";
+  for (let index = stops.length - 1; index >= 0; index -= 1) {
+    const stop = stops[index];
+    if (stop.kind === "tracing") return stop.project;
+    if (stop.kind === "session" && stop.project) return stop.project;
+  }
+  return "";
 }
 
 function initialTrail(): TrailStop[] {
@@ -1399,8 +1472,15 @@ function initialTrail(): TrailStop[] {
   const stored = loadStoredTrail();
   if (opened && stored?.trail.some((stop) => trailKey(stop) === trailKey(opened))) return stored.trail;
   if (opened) return [opened];
+  if (
+    stored?.trail.length === 1
+    && stored.trail[0].kind === "root"
+    && stored.trail[0].id === "current"
+  ) {
+    return [{ kind: "timeline" }];
+  }
   if (stored?.trail.length) return stored.trail;
-  return [{ kind: "root", id: "current" }];
+  return [{ kind: "timeline" }];
 }
 
 function Follow({ token, label, onOpen }: { token: string; label: string; onOpen: (token: string) => void }) {
@@ -1439,6 +1519,50 @@ function NameLinks({ names, onOpen }: { names: string[]; onOpen: (token: string)
       <Follow token={`schema:${name}`} label={name} onOpen={onOpen} />
     </span>
   ));
+}
+
+function formatBinLabel(start: number, unit: string): string {
+  const iso = new Date(start).toISOString();
+  if (unit === "hour" || unit === "6h") return iso.slice(5, 16).replace("T", " ");
+  if (unit === "month") return iso.slice(0, 7);
+  return iso.slice(0, 10);
+}
+
+function formatRange(start: number, end: number): string {
+  return `${formatStamp(start)} – ${formatStamp(end)} UTC`;
+}
+
+function domainTitle(domain: TimelineDomain, byIri: Map<string, LineupConcept>): string {
+  return (domain.iri && byIri.get(domain.iri)?.label) || domain.code;
+}
+
+function StatLine({ row }: { row: TraceStats }) {
+  return (
+    <>
+      <p>{row.traces} traces · {row.sessions} sessions · {row.tokens} tokens · {row.grounded} grounded</p>
+      <p className="muted">{row.augmented} augmented</p>
+      {row.latency_ms != null ? <p>Latency {row.latency_ms} ms</p> : null}
+      {row.total_cost != null ? <p>Cost {row.total_cost}</p> : null}
+      {row.errors != null ? <p>Errors {row.errors}</p> : null}
+    </>
+  );
+}
+
+function WindowSelect({ windowId, onWindow }: { windowId: string; onWindow: (windowId: string) => void }) {
+  return (
+    <select aria-label="Window" value={windowId} onChange={(event) => onWindow(event.target.value)}>
+      {WINDOWS.map(([value, label]) => (
+        <option key={value} value={value}>{label}</option>
+      ))}
+    </select>
+  );
+}
+
+function findDomain(timeline: TimelineDoc, code: string, start: number, end: number): TimelineDomain | undefined {
+  if (start === timeline.start && end === timeline.end) {
+    return timeline.domains.find((domain) => domain.code === code);
+  }
+  return timeline.bins.find((bin) => bin.start === start && bin.end === end)?.domains.find((domain) => domain.code === code);
 }
 
 function TrailPanels({
@@ -1491,6 +1615,250 @@ function TrailPanels({
                 {closer}
               </header>
               <div className="sum-panel-body">{body}</div>
+            </article>
+          );
+        }
+        if (stop.kind === "timeline" || stop.kind === "trends" || stop.kind === "bin" || stop.kind === "domain") {
+          const timeline = view.timeline;
+          const windowLabel = WINDOWS.find(([value]) => value === windowId)?.[1] || windowId;
+          if (!timeline) {
+            return (
+              <article className="sum-panel sum-panel-wide" key={`${trailKey(stop)}:${index}`}>
+                <header className="sum-panel-head"><h2>Timeline</h2>{closer}</header>
+                <div className="sum-panel-body">{loading ? "Loading timeline…" : "This summary has no timeline."}</div>
+              </article>
+            );
+          }
+          if (stop.kind === "trends") {
+            const maxTraces = Math.max(1, ...timeline.bins.map((bin) => bin.traces));
+            const showLatency = timeline.bins.some((bin) => bin.latency_ms != null);
+            const showCost = timeline.bins.some((bin) => bin.total_cost != null);
+            const showErrors = timeline.bins.some((bin) => bin.errors != null);
+            return (
+              <article className="sum-panel sum-panel-wide" key={`${trailKey(stop)}:${index}`}>
+                <header className="sum-panel-head">
+                  <h2>Trends</h2>
+                  {closer}
+                  <span className="muted sum-panel-meta">{windowLabel} · {timeline.unit} bins</span>
+                </header>
+                <div className="sum-panel-body">
+                  <table className="sum-bin-table">
+                    <thead>
+                      <tr>
+                        <th>Bin</th>
+                        <th>Traces</th>
+                        <th>Tokens</th>
+                        <th>Grounded</th>
+                        {showLatency ? <th>Latency</th> : null}
+                        {showCost ? <th>Cost</th> : null}
+                        {showErrors ? <th>Errors</th> : null}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {timeline.bins.map((bin) => (
+                        <tr key={bin.start}>
+                          <td>
+                            <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
+                          </td>
+                          <td>
+                            <span className="sum-trend-track" aria-hidden="true">
+                              <span className="sum-trend-bar" style={{ width: `${(bin.traces / maxTraces) * 100}%` }} />
+                            </span>{" "}
+                            {bin.traces}
+                          </td>
+                          <td>{bin.tokens}</td>
+                          <td>{bin.grounded}</td>
+                          {showLatency ? <td>{bin.latency_ms ?? "—"}</td> : null}
+                          {showCost ? <td>{bin.total_cost ?? "—"}</td> : null}
+                          {showErrors ? <td>{bin.errors ?? "—"}</td> : null}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </article>
+            );
+          }
+          if (stop.kind === "bin") {
+            const bin = timeline.bins.find((item) => item.start === stop.start);
+            return (
+              <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+                <header className="sum-panel-head">
+                  <h2>{formatBinLabel(stop.start, timeline.unit)}</h2>
+                  {closer}
+                  <span className="muted sum-panel-meta">{formatRange(stop.start, stop.end)}</span>
+                </header>
+                <div className="sum-panel-body">
+                  {bin ? (
+                    <>
+                      <StatLine row={bin} />
+                      {bin.undomain ? <p className="muted">{bin.undomain} traces in this bin have no topic domain.</p> : null}
+                      {bin.domains.length ? (
+                        <ul className="sum-links">
+                          {bin.domains.map((domain) => (
+                            <li key={domain.code}>
+                              <Follow
+                                token={`domain|${domain.code}|${bin.start}|${bin.end}`}
+                                label={`${domainTitle(domain, byIri)} ${domain.traces}`}
+                                onOpen={(token) => onOpen(index, token)}
+                              />
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="muted">No topic domain in this bin.</p>
+                      )}
+                      {bin.top_iris?.length ? (
+                        <p>
+                          Leaves{" "}
+                          {bin.top_iris.map((item, leafIndex) => (
+                            <span key={item.iri}>
+                              {leafIndex > 0 ? " · " : null}
+                              <Follow token={item.iri} label={`${item.iri.split("#").pop()} ${item.count}`} onOpen={(token) => onOpen(index, token)} />
+                            </span>
+                          ))}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p>This timeframe is outside the selected window.</p>
+                  )}
+                </div>
+              </article>
+            );
+          }
+          if (stop.kind === "domain") {
+            const domain = findDomain(timeline, stop.code, stop.start, stop.end);
+            const title = domain ? domainTitle(domain, byIri) : stop.code;
+            return (
+              <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+                <header className="sum-panel-head">
+                  <h2>{title}</h2>
+                  {closer}
+                  <span className="muted sum-panel-meta">{stop.code} · {formatRange(stop.start, stop.end)}</span>
+                </header>
+                <div className="sum-panel-body">
+                  {domain ? (
+                    <>
+                      <StatLine row={domain} />
+                      {domain.iri ? (
+                        <p>
+                          <Follow token={domain.iri} label={domain.iri.split("#").pop() || domain.iri} onOpen={(token) => onOpen(index, token)} />
+                        </p>
+                      ) : null}
+                      {domain.top_iris?.length ? (
+                        <p>
+                          Leaves{" "}
+                          {domain.top_iris.map((item, leafIndex) => (
+                            <span key={item.iri}>
+                              {leafIndex > 0 ? " · " : null}
+                              <Follow token={item.iri} label={`${item.iri.split("#").pop()} ${item.count}`} onOpen={(token) => onOpen(index, token)} />
+                            </span>
+                          ))}
+                        </p>
+                      ) : null}
+                      {domain.top_sessions?.length ? (
+                        <ul className="sum-links">
+                          {domain.top_sessions.map((session) => (
+                            <li key={session.id}>
+                              <Follow
+                                token={session.project ? `session|${session.project}|${session.id}` : `session:${session.id}`}
+                                label={session.id}
+                                onOpen={(token) => onOpen(index, token)}
+                              />
+                              <span className="muted"> {session.traces}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                    </>
+                  ) : (
+                    <p>This domain is outside the selected window.</p>
+                  )}
+                </div>
+              </article>
+            );
+          }
+          const maxTraces = Math.max(1, ...timeline.bins.map((bin) => bin.traces));
+          return (
+            <article className="sum-panel sum-panel-wide" key={`${trailKey(stop)}:${index}`}>
+              <header className="sum-panel-head">
+                <h2>Timeline</h2>
+                {closer}
+                <WindowSelect windowId={windowId} onWindow={onWindow} />
+                <span className="muted sum-panel-meta">{windowLabel} · {timeline.unit} bins · {formatRange(timeline.start, timeline.end)}</span>
+              </header>
+              <div className="sum-panel-body">
+                <StatLine row={timeline.totals} />
+                {timeline.totals.undomain ? <p className="muted">{timeline.totals.undomain} traces in this window have no topic domain.</p> : null}
+                {timeline.domains.length ? (
+                  <p>
+                    Domains{" "}
+                    {timeline.domains.slice(0, 8).map((domain, domainIndex) => (
+                      <span key={domain.code}>
+                        {domainIndex > 0 ? " · " : null}
+                        <Follow
+                          token={`domain|${domain.code}|${timeline.start}|${timeline.end}`}
+                          label={`${domainTitle(domain, byIri)} ${domain.traces}`}
+                          onOpen={(token) => onOpen(index, token)}
+                        />
+                      </span>
+                    ))}
+                  </p>
+                ) : null}
+                <p>
+                  <Follow token="trends" label="Trends" onOpen={(token) => onOpen(index, token)} />
+                </p>
+                <div className="sum-bins" aria-label="Histogram">
+                  {timeline.bins.map((bin) => (
+                    <button
+                      key={bin.start}
+                      type="button"
+                      className={`sum-bin ${heatLevel(bin.traces, maxTraces)}`}
+                      title={`${formatBinLabel(bin.start, timeline.unit)} · ${bin.traces} traces${bin.domains[0] ? ` · ${domainTitle(bin.domains[0], byIri)}` : ""}`}
+                      onClick={() => onOpen(index, `bin|${bin.start}|${bin.end}`)}
+                    />
+                  ))}
+                </div>
+                <table className="sum-bin-table">
+                  <thead>
+                    <tr>
+                      <th>Bin</th>
+                      <th>Traces</th>
+                      <th>Sessions</th>
+                      <th>Tokens</th>
+                      <th>Grounded</th>
+                      <th>Domains</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {timeline.bins.map((bin) => (
+                      <tr key={bin.start}>
+                        <td>
+                          <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
+                        </td>
+                        <td>{bin.traces}</td>
+                        <td>{bin.sessions}</td>
+                        <td>{bin.tokens}</td>
+                        <td>{bin.grounded}</td>
+                        <td>
+                          {bin.domains.slice(0, 3).map((domain, domainIndex) => (
+                            <span key={domain.code}>
+                              {domainIndex > 0 ? " · " : null}
+                              <Follow
+                                token={`domain|${domain.code}|${bin.start}|${bin.end}`}
+                                label={`${domainTitle(domain, byIri)} ${domain.traces}`}
+                                onOpen={(token) => onOpen(index, token)}
+                              />
+                            </span>
+                          ))}
+                          {bin.domains.length > 3 ? <span className="muted"> · {bin.domains.length - 3} more</span> : null}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </article>
           );
         }
@@ -1628,6 +1996,7 @@ function TrailPanels({
             </article>
           );
         }
+        if (stop.kind !== "session") return null;
         const session = view.sessions.find((item) => item.id === stop.id);
         return (
           <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
@@ -1720,7 +2089,7 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
     const onPop = () => {
       const opened = readOpen();
       setTrail((current) => {
-        if (!opened) return [{ kind: "root", id: root }];
+        if (!opened) return root === "current" ? [{ kind: "timeline" }] : [{ kind: "root", id: root }];
         const key = trailKey(opened);
         const index = current.findIndex((stop) => trailKey(stop) === key);
         if (index >= 0) return current.slice(0, index + 1);
@@ -1763,13 +2132,33 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
               if (!value) return;
               const id = String(value);
               setRoot(id);
-              setTrail([{ kind: "root", id }]);
+              setTrail(id === "current" ? [{ kind: "timeline" }] : [{ kind: "root", id }]);
             }}
             items={["archive", "current", "scratch"].map((id) => ({
               value: id,
               label: id.charAt(0).toUpperCase() + id.slice(1),
             }))}
           />
+        </div>
+        <div className="sum-group">
+          <div className="sum-group-title">TRACING</div>
+          <button
+            type="button"
+            className={seed?.kind === "timeline" ? "sum-tab active" : "sum-tab"}
+            onClick={() => setTrail([{ kind: "timeline" }])}
+          >
+            Timeline
+          </button>
+          {view.tracing.projects.map((item) => (
+            <button
+              key={item.project}
+              type="button"
+              className={seed?.kind === "tracing" && seed.project === item.project ? "sum-tab active" : "sum-tab"}
+              onClick={() => setTrail([{ kind: "tracing", project: item.project }])}
+            >
+              {item.project}
+            </button>
+          ))}
         </div>
         <div className="sum-group">
           <div className="sum-group-title">LEXICON</div>
@@ -1794,19 +2183,6 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
               onClick={() => setTrail([{ kind: "schema", name: item.name }])}
             >
               {item.name}
-            </button>
-          ))}
-        </div>
-        <div className="sum-group">
-          <div className="sum-group-title">TRACING</div>
-          {view.tracing.projects.map((item) => (
-            <button
-              key={item.project}
-              type="button"
-              className={seed?.kind === "tracing" && seed.project === item.project ? "sum-tab active" : "sum-tab"}
-              onClick={() => setTrail([{ kind: "tracing", project: item.project }])}
-            >
-              {item.project}
             </button>
           ))}
         </div>

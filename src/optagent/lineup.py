@@ -11,19 +11,23 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from optagent.phoenix_spans import rich_segments
 
 SDG_PIN = "b24ef9f606605dd7bb8877bddd2d9672c78282ad"
 SDG_IRI = "https://signals.zndx.org/sdg#"
+_HOUR_MS = 3_600_000
+_DAY_MS = 86_400_000
 _WINDOWS = {
-    "24h": 86_400_000,
-    "7d": 7 * 86_400_000,
-    "30d": 30 * 86_400_000,
-    "90d": 90 * 86_400_000,
-    "365d": 365 * 86_400_000,
+    "24h": _DAY_MS,
+    "7d": 7 * _DAY_MS,
+    "30d": 30 * _DAY_MS,
+    "90d": 90 * _DAY_MS,
+    "365d": 365 * _DAY_MS,
 }
+_MAX_WINDOW_MS = 3660 * _DAY_MS
 _CONCEPT = re.compile(
     r"<(https://signals\.zndx\.org/sdg#[^>]+)>\s+a\s+skos:Concept\s*;(?P<body>.*?)(?=\n<https://|\Z)",
     re.S,
@@ -215,6 +219,227 @@ def _metric(span: dict, key: str):
     return None
 
 
+def bucket_unit(duration_ms: int) -> str:
+    """Same duration policy as the Gaius cognition histogram.
+
+    Hour through 48h, 6h through 14d, day through 180d, week through 1100d,
+    otherwise month.
+    """
+
+    if duration_ms <= 48 * _HOUR_MS:
+        return "hour"
+    if duration_ms <= 14 * _DAY_MS:
+        return "6h"
+    if duration_ms <= 180 * _DAY_MS:
+        return "day"
+    if duration_ms <= 1100 * _DAY_MS:
+        return "week"
+    return "month"
+
+
+def _ms(moment: datetime) -> int:
+    return int(round(moment.timestamp() * 1000))
+
+
+def _utc(ms: int) -> datetime:
+    return datetime.fromtimestamp(ms / 1000, tz=timezone.utc)
+
+
+def _midnight(moment: datetime) -> datetime:
+    moment = moment.astimezone(timezone.utc)
+    return moment.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def _next_month(moment: datetime) -> datetime:
+    if moment.month == 12:
+        return moment.replace(year=moment.year + 1, month=1)
+    return moment.replace(month=moment.month + 1)
+
+
+def build_bins(start_ms: int, end_ms: int, unit: str) -> list[tuple[int, int]]:
+    """Half-open bins. Hour and 6h are anchored at the start; day, week, and month use UTC calendar edges."""
+
+    if start_ms >= end_ms:
+        return []
+    if unit in ("hour", "6h"):
+        step = _HOUR_MS if unit == "hour" else 6 * _HOUR_MS
+        bins: list[tuple[int, int]] = []
+        cursor = start_ms
+        while cursor < end_ms:
+            bins.append((cursor, min(cursor + step, end_ms)))
+            cursor += step
+        return bins
+    start = _utc(start_ms)
+    end = _utc(end_ms)
+    if unit == "day":
+        anchor, advance = _midnight(start), lambda moment: moment + timedelta(days=1)
+    elif unit == "week":
+        midnight = _midnight(start)
+        anchor, advance = midnight - timedelta(days=midnight.weekday()), lambda moment: moment + timedelta(days=7)
+    elif unit == "month":
+        midnight = _midnight(start)
+        anchor, advance = midnight.replace(day=1), _next_month
+    else:
+        return build_bins(start_ms, end_ms, "day")
+    bins = []
+    cursor_dt = anchor
+    while cursor_dt < end:
+        nxt = advance(cursor_dt)
+        bin_start = max(cursor_dt, start)
+        bin_end = min(nxt, end)
+        if bin_end > bin_start:
+            bins.append((_ms(bin_start), _ms(bin_end)))
+        cursor_dt = nxt
+    return bins
+
+
+def _timeline_bounds(spans: list[dict], *, now_ms: int, window: str) -> tuple[int, int]:
+    if window == "all":
+        stamps = [stamp for span in spans if (stamp := _generated_ms(span)) > 0]
+        start = min(stamps) if stamps else now_ms - _WINDOWS["365d"]
+        if start >= now_ms:
+            start = now_ms - _HOUR_MS
+        if now_ms - start > _MAX_WINDOW_MS:
+            start = now_ms - _MAX_WINDOW_MS
+        return start, now_ms
+    return now_ms - _WINDOWS.get(window, _WINDOWS["365d"]), now_ms
+
+
+def _fresh() -> dict:
+    return {
+        "traces": 0,
+        "sessions": {},
+        "tokens": 0,
+        "grounded": 0,
+        "augmented": 0,
+        "latency": [],
+        "cost": [],
+        "errors": 0,
+        "error_known": False,
+        "leaves": {},
+        "undomain": 0,
+        "domains": {},
+    }
+
+
+def _observe(bucket: dict, span: dict, *, nest: bool) -> None:
+    attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
+    resource = span.get("resource") if isinstance(span.get("resource"), dict) else {}
+    bucket["traces"] += 1
+    sid = str(attributes.get("session.id") or "")
+    project = str(resource.get("openinference.project.name") or "")
+    if sid:
+        row = bucket["sessions"].setdefault(sid, [project, 0])
+        row[1] += 1
+    bucket["tokens"] += token_count(span)
+    if _augmented_ms(span) is not None:
+        bucket["augmented"] += 1
+    for item in attributes.get("sdg.spans") or []:
+        if isinstance(item, dict) and item.get("iri"):
+            bucket["grounded"] += 1
+            iri = str(item["iri"])
+            bucket["leaves"][iri] = bucket["leaves"].get(iri, 0) + 1
+    lat = _metric(span, "latency_ms")
+    if lat is not None:
+        bucket["latency"].append(float(lat))
+    spent = _metric(span, "total_cost")
+    if spent is not None:
+        bucket["cost"].append(float(spent))
+    if "error" in attributes:
+        bucket["error_known"] = True
+        if attributes.get("error"):
+            bucket["errors"] += 1
+    if not nest:
+        return
+    code = str(attributes.get("aegir.genus_code") or "")
+    if not code:
+        bucket["undomain"] += 1
+        return
+    child = bucket["domains"].setdefault(code, _fresh())
+    iri = str(attributes.get("aegir.genus_iri") or "")
+    if iri and not child.get("iri"):
+        child["iri"] = iri
+    _observe(child, span, nest=False)
+
+
+def _publish(bucket: dict, *, nest: bool) -> dict:
+    sessions = bucket["sessions"]
+    leaves = bucket["leaves"]
+    body = {
+        "traces": bucket["traces"],
+        "sessions": len(sessions),
+        "tokens": bucket["tokens"],
+        "grounded": bucket["grounded"],
+        "augmented": bucket["augmented"],
+        "latency_ms": round(sum(bucket["latency"]) / len(bucket["latency"]), 3) if bucket["latency"] else None,
+        "total_cost": round(sum(bucket["cost"]), 6) if bucket["cost"] else None,
+        "errors": bucket["errors"] if bucket["error_known"] else None,
+        "top_iris": [
+            {"iri": iri, "count": leaves[iri]}
+            for iri in sorted(leaves, key=lambda item: (-leaves[item], item))[:8]
+        ],
+        "top_sessions": [
+            {"id": sid, "project": sessions[sid][0], "traces": sessions[sid][1]}
+            for sid in sorted(sessions, key=lambda item: (-sessions[item][1], item))[:8]
+        ],
+    }
+    if nest:
+        body["undomain"] = bucket["undomain"]
+        body["domains"] = [
+            {"code": code, "iri": child.get("iri") or "", **_publish(child, nest=False)}
+            for code, child in sorted(bucket["domains"].items(), key=lambda item: (-item[1]["traces"], item[0]))
+        ]
+    return body
+
+
+def _bin_index(bins: list[tuple[int, int]], stamp: int, end_ms: int) -> int:
+    lo = 0
+    hi = len(bins)
+    while lo < hi:
+        mid = (lo + hi) // 2
+        start, end = bins[mid]
+        if stamp < start:
+            hi = mid
+        elif stamp >= end:
+            lo = mid + 1
+        else:
+            return mid
+    if bins and stamp == end_ms:
+        return len(bins) - 1
+    return -1
+
+
+def timeline_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> dict:
+    """Histogram bins for one window, with overall stats and topic-domain stats in each bin."""
+
+    start_ms, end_ms = _timeline_bounds(spans, now_ms=now_ms, window=window)
+    unit = bucket_unit(end_ms - start_ms)
+    edges = build_bins(start_ms, end_ms, unit)
+    overall = _fresh()
+    per_bin = [_fresh() for _ in edges]
+    for span in spans:
+        stamp = _generated_ms(span)
+        if stamp < start_ms or stamp > end_ms:
+            continue
+        _observe(overall, span, nest=True)
+        index = _bin_index(edges, stamp, end_ms)
+        if index >= 0:
+            _observe(per_bin[index], span, nest=True)
+    published = _publish(overall, nest=True)
+    return {
+        "window": window,
+        "unit": unit,
+        "start": start_ms,
+        "end": end_ms,
+        "totals": {key: published[key] for key in published if key != "domains"},
+        "domains": published["domains"],
+        "bins": [
+            {"start": edges[index][0], "end": edges[index][1], **_publish(per_bin[index], nest=True)}
+            for index in range(len(edges))
+        ],
+    }
+
+
 def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> dict:
     """LangSmith-style project dashboard from spans we actually stored."""
 
@@ -346,6 +571,7 @@ def build_lineup(
         "lexicon": lexicon,
         "schema": load_schema(root),
         "tracing": tracing_report(spans, now_ms=now_ms, window=window),
+        "timeline": timeline_report(spans, now_ms=now_ms, window=window),
         "sessions": session_items(spans, project) if project else [],
         "published": sorted(published),
     }

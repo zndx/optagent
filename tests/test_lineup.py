@@ -3,7 +3,7 @@
 
 from pathlib import Path
 
-from optagent.lineup import SDG_PIN, build_lineup, load_lexicon, load_schema, token_count
+from optagent.lineup import SDG_PIN, bucket_unit, build_lineup, load_lexicon, load_schema, timeline_report, token_count
 from optagent.phoenix_spans import make_span, rich_segments
 
 
@@ -116,3 +116,89 @@ def test_schema_foreign_keys_are_table_links(tmp_path: Path) -> None:
     assert tables["specimen"]["refs"] == []
     assert tables["assay"]["columns"] == ["id", "run_on"]
     assert tables["assay"]["refs"] == ["specimen"]
+
+
+def _tiles(report: dict) -> None:
+    bins = report["bins"]
+    assert bins[0]["start"] == report["start"]
+    assert bins[-1]["end"] == report["end"]
+    for previous, current in zip(bins, bins[1:]):
+        assert previous["end"] == current["start"]
+
+
+def test_timeline_bins_follow_the_gaius_histogram() -> None:
+    now = 1_700_000_000_000
+    hours = timeline_report([], now_ms=now, window="24h")
+    assert hours["unit"] == "hour"
+    assert len(hours["bins"]) == 24
+    _tiles(hours)
+    six = timeline_report([], now_ms=now, window="7d")
+    assert six["unit"] == "6h"
+    assert len(six["bins"]) == 28
+    _tiles(six)
+    days = timeline_report([], now_ms=now, window="30d")
+    assert days["unit"] == "day"
+    _tiles(days)
+    quarter = timeline_report([], now_ms=now, window="90d")
+    assert quarter["unit"] == "day"
+    _tiles(quarter)
+    year = timeline_report([], now_ms=now, window="365d")
+    assert year["unit"] == "week"
+    _tiles(year)
+    assert bucket_unit(1200 * 86_400_000) == "month"
+
+
+def test_each_bin_counts_topic_domains_without_invented_metrics() -> None:
+    now = 1_700_000_000_000
+    inside = (now - 3_600_000) * 1_000_000
+    span = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:1",
+        name="lims",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="bin-1",
+        start_time_unix_nano=inside,
+        output_value="The specimen is accessioned.",
+        attributes={
+            "aegir.genus_code": "16.2",
+            "aegir.genus_iri": "https://signals.zndx.org/sdg#LIMS",
+            "sdg.spans": [
+                {
+                    "start": 0,
+                    "end": 4,
+                    "text": "The",
+                    "iri": "https://signals.zndx.org/sdg#LIMS_SPECIMEN_LIFECYCLE",
+                    "label": "Specimen",
+                }
+            ],
+        },
+    )
+    plain = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:2",
+        name="plain",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="bin-2",
+        start_time_unix_nano=inside,
+        output_value="hello",
+    )
+    report = timeline_report([span, plain], now_ms=now, window="24h")
+    hot = next(item for item in report["bins"] if item["traces"])
+    assert hot["traces"] == 2
+    assert hot["undomain"] == 1
+    assert hot["latency_ms"] is None
+    assert hot["total_cost"] is None
+    assert hot["errors"] is None
+    domain = hot["domains"][0]
+    assert domain["code"] == "16.2"
+    assert domain["iri"].endswith("#LIMS")
+    assert domain["traces"] == 1
+    assert domain["grounded"] == 1
+    assert domain["top_iris"][0]["iri"].endswith("LIMS_SPECIMEN_LIFECYCLE")
+    assert domain["top_sessions"][0]["id"] == "hermes:agent-rtc:1"
+    assert report["totals"]["traces"] == 2
+    assert report["domains"][0]["code"] == "16.2"

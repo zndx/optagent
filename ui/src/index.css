@@ -224,7 +224,27 @@
   font: inherit;
   font-size: 0.75rem;
 }
+.sum-panel-wide { flex-basis: 46rem; max-width: min(72rem, 92vw); }
 .sum-panel-body { padding: 0.75rem 0.85rem; overflow: auto; flex: 1; }
+.sum-bins { display: flex; gap: 3px; overflow-x: auto; padding-bottom: 0.35rem; }
+.sum-bin {
+  flex: 1 0 0.55rem;
+  min-width: 0.55rem;
+  height: 2.4rem;
+  border: 0;
+  border-radius: 2px;
+  padding: 0;
+  cursor: pointer;
+}
+.sum-bin-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+.sum-bin-table th, .sum-bin-table td {
+  text-align: left;
+  padding: 0.28rem 0.35rem;
+  border-bottom: 1px solid var(--color-kumo-line);
+  vertical-align: baseline;
+}
+.sum-trend-track { display: inline-block; width: 5.5rem; height: 0.45rem; background: var(--color-kumo-recessed); border-radius: 2px; vertical-align: middle; }
+.sum-trend-bar { display: block; height: 100%; background: var(--color-kumo-success); border-radius: 2px; }
 .sum-links { list-style: none; padding: 0; margin: 0.45rem 0; }
 .sum-links li { margin: 0.2rem 0; }
 .sum-links a, .sum-panel-body a {
