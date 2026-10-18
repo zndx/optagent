@@ -3,17 +3,23 @@
 
 """Harvest lattice traces into a signals-snapshot version 2 archive.
 
-Read-only. This is a procedure, not a CI gate. Gaius sittings, cognition
-thoughts, and flow stages become project ``gaius``. Metabot turns become
-project ``metabase``. The archive is what Settings uploads into an AMP.
+Read-only. This is a procedure, not a CI gate. Project ``gaius`` holds
+cognition thoughts, agent-written briefs, and the HX Iceberg exchanges
+(``llm.generations`` and ``hx.cot_reasoning``). Metabot turns become
+project ``metabase``. Hermes SessionDB, including reasoning and ``viz_show``
+chart kinds, becomes project ``hermes``. Semantica ``decision`` nodes become
+project ``semantica``. Rows that already point at an HX generation are not
+copied again.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sqlite3
+import subprocess
 import tarfile
 import uuid
 from datetime import datetime, timezone
@@ -33,6 +39,21 @@ _REASONING_CAP = 10_000
 _OUTCOME_CAP = 1_000
 
 
+def _viz_kind(content: str, tool_name: str) -> str:
+    """Chart kind stored on a ``viz_show`` tool result. Empty when this row is not one."""
+
+    if str(tool_name or "") != "viz_show":
+        return ""
+    try:
+        payload = json.loads(content or "")
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    kind = str(payload.get("kind") or "").strip()
+    return kind[:40]
+
+
 def _clip(text: str) -> str:
     body = (text or "").strip()
     if len(body) <= _TEXT_CAP:
@@ -41,14 +62,24 @@ def _clip(text: str) -> str:
 
 
 def _unix_ns(value) -> int:
-    if value is None:
+    if value is None or value == "":
         return 0
     if isinstance(value, datetime):
         return _ns(value)
+    if isinstance(value, str) and "T" in value:
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return 0
+        return _ns(parsed)
     try:
-        return int(float(value) * 1_000_000_000)
+        number = float(value)
     except (TypeError, ValueError):
         return 0
+    # updated_ns from Semantica is already nanoseconds. Hermes timestamps are unix seconds.
+    if number > 10_000_000_000_000:
+        return int(number)
+    return int(number * 1_000_000_000)
 
 
 def _ns(value) -> int:
@@ -156,11 +187,10 @@ def metabase_spans(database_url: str) -> tuple[list[dict], dict]:
     with psycopg.connect(database_url) as conn:
         rows = conn.execute(
             """
-            SELECT m.id::text, c.id::text, c.title, m.user_id::text, m.role,
+            SELECT m.id::text, c.id::text, c.summary, c.user_id::text, m.role,
                    m.total_tokens, m.data::text, m.created_at
             FROM metabot_message m
             JOIN metabot_conversation c ON c.id = m.conversation_id
-            WHERE m.deleted_at IS NULL
             ORDER BY m.conversation_id, m.created_at
             """
         ).fetchall()
@@ -338,9 +368,11 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
             sid = session_id("hermes", source, local)
             title = str(session["title"] or "").strip()
             model = str(session["model"] or "")
+            columns = {row[1] for row in conn.execute("pragma table_info(messages)")}
+            tool_column = ", tool_name" if "tool_name" in columns else ""
             rows = conn.execute(
-                """
-                SELECT id, role, content, reasoning, timestamp, token_count, display_metadata
+                f"""
+                SELECT id, role, content, reasoning, timestamp, token_count, display_metadata{tool_column}
                 FROM messages
                 WHERE session_id = ? AND coalesce(active, 1) = 1
                   AND role IN ('user', 'assistant', 'tool')
@@ -376,6 +408,10 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
                     "llm.model_name": model,
                     "llm.token_count.total": int(message["token_count"] or 0),
                 }
+                viz_kind = _viz_kind(message["content"] if role == "tool" else "", message["tool_name"] if "tool_name" in message.keys() else "")
+                if viz_kind:
+                    attributes["hermes.viz.kind"] = viz_kind
+                    name = f"viz:{viz_kind}"
                 if role == "assistant":
                     # Shape Semantica can record later. Confidence is omitted:
                     # Hermes does not store one, and a default would be invented.
@@ -423,7 +459,258 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
     return spans, watermark
 
 
-def build_archive(dest: Path, gaius_url: str, metabase_url: str, hermes_db: str) -> Path:
+def _recorded_total(*parts: object) -> int:
+    """Sum token counts a producer stored. A missing count stays out of the sum."""
+
+    total = 0
+    seen = False
+    for part in parts:
+        if part is None or isinstance(part, bool):
+            continue
+        try:
+            total += int(part)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+        seen = True
+    return total if seen else 0
+
+
+def _positive_int(value: object) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return 0
+    return number if number > 0 else 0
+
+
+def _pair(primary: str, extra: str, title: str) -> str:
+    body = _clip(primary)
+    note = (extra or "").strip()
+    if not note:
+        return body
+    note = note[:16_000]
+    return _clip(f"{body}\n\n## {title}\n\n{note}" if body else f"## {title}\n\n{note}")
+
+
+def gaius_kb_spans(database_url: str) -> tuple[list[dict], dict]:
+    """Agent-written briefs. These notes are not rows in an HX table."""
+
+    import psycopg
+
+    spans: list[dict] = []
+    watermark = {"table": "cognition_briefs+agenda_briefs", "max": ""}
+    statements = (
+        (
+            "cognition-brief",
+            """
+            SELECT id::text, created_at, title, body, spoken, model, tokens_used,
+                   generation_context::text, note_path
+            FROM cognition_briefs
+            ORDER BY created_at
+            """,
+        ),
+        (
+            "agenda-brief",
+            """
+            SELECT id::text, created_at, title, body, spoken, model, tokens_used,
+                   generation_context::text, note_path
+            FROM agenda_briefs
+            ORDER BY created_at
+            """,
+        ),
+    )
+    with psycopg.connect(database_url) as conn:
+        for activity, sql in statements:
+            for row in conn.execute(sql).fetchall():
+                brief_id, created, title, body, spoken, model, tokens, context, note_path = row
+                text = "\n\n".join(part for part in (str(body or ""), str(spoken or "")) if str(part).strip())
+                spans.append(
+                    make_span(
+                        project="gaius",
+                        session=session_id("gaius", "kb", activity),
+                        name=str(title or note_path or activity)[:160],
+                        activity=activity,
+                        capability="kb",
+                        service_name="gaius-kb",
+                        trace_key=f"{activity}:{brief_id}",
+                        start_time_unix_nano=_ns(created),
+                        input_value=_clip(str(context or "")),
+                        output_value=_clip(text),
+                        span_kind="LLM" if model else "CHAIN",
+                        attributes={
+                            "llm.model_name": str(model or ""),
+                            "llm.token_count.total": int(tokens or 0),
+                            "gaius.note_path": str(note_path or ""),
+                        },
+                    )
+                )
+                if created is not None:
+                    watermark["max"] = created.isoformat()
+    return spans, watermark
+
+
+def generation_span(row: dict) -> dict:
+    """One ``llm.generations`` exchange, including its thinking trace when stored."""
+
+    summary_type = str(row.get("summary_type") or "generation")
+    thinking = str(row.get("thinking_trace") or "")
+    output = _pair(str(row.get("output") or ""), thinking, "Thinking")
+    attributes = {
+        "llm.model_name": str(row.get("model_name") or ""),
+        "llm.token_count.total": _recorded_total(row.get("input_tokens"), row.get("output_tokens")),
+        "gaius.hx.summary_type": summary_type,
+    }
+    if thinking.strip():
+        attributes["gaius.hx.thinking"] = "true"
+    latency = _positive_int(row.get("latency_ms"))
+    if latency:
+        attributes["latency_ms"] = latency
+    return make_span(
+        project="gaius",
+        session=session_id("gaius", "hx", summary_type),
+        name=summary_type[:160],
+        activity="hx-generation",
+        capability="hx",
+        service_name="gaius-hx",
+        trace_key=f"generation:{row.get('id')}",
+        start_time_unix_nano=_unix_ns(row.get("generated_at")),
+        input_value=_clip(str(row.get("prompt") or "")),
+        output_value=output,
+        span_kind="LLM",
+        attributes=attributes,
+    )
+
+
+def cot_span(row: dict) -> dict:
+    """One optillm reasoning row from ``hx.cot_reasoning``."""
+
+    technique = str(row.get("technique") or "cot_reflection")
+    attributes = {
+        "llm.model_name": str(row.get("model_name") or ""),
+        "llm.token_count.total": _recorded_total(row.get("input_tokens"), row.get("output_tokens")),
+        "gaius.hx.technique": technique,
+        "gaius.hx.queue": str(row.get("yk_queue") or ""),
+        "gaius.hx.flow": str(row.get("flow_name") or ""),
+    }
+    latency = _positive_int(row.get("latency_ms"))
+    if latency:
+        attributes["latency_ms"] = latency
+    return make_span(
+        project="gaius",
+        session=session_id("gaius", "hx", technique),
+        name=technique[:160],
+        activity="cot-reasoning",
+        capability="hx",
+        service_name="gaius-hx",
+        trace_key=f"cot:{row.get('id')}",
+        start_time_unix_nano=_unix_ns(row.get("generated_at")),
+        input_value=_clip(str(row.get("prompt") or "")),
+        output_value=_pair(str(row.get("reasoning_trace") or ""), str(row.get("output") or ""), "Decision"),
+        span_kind="LLM",
+        attributes=attributes,
+    )
+
+
+def hx_records(python: str, script: str, dest: Path, cwd: str) -> tuple[list[dict], dict]:
+    """Read HX Iceberg rows through the Gaius interpreter. Empty when that tree is absent."""
+
+    watermark: dict = {"table": "llm.generations+hx.cot_reasoning"}
+    if not python or not Path(python).is_file():
+        watermark["skipped"] = "gaius python is not on this host"
+        return [], watermark
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    completed = subprocess.run(
+        [python, script, str(dest)],
+        cwd=cwd or None,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if completed.returncode != 0:
+        watermark["error"] = (completed.stderr or completed.stdout or "hx export failed")[-500:]
+        return [], watermark
+    spans: list[dict] = []
+    if dest.is_file():
+        for line in dest.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            row = json.loads(line)
+            kind = str(row.get("kind") or "")
+            if kind == "generation":
+                spans.append(generation_span(row))
+            elif kind == "cot":
+                spans.append(cot_span(row))
+    watermark["rows"] = len(spans)
+    return spans, watermark
+
+
+def semantica_decision_spans(database_url: str) -> tuple[list[dict], dict]:
+    """Durable Semantica decision nodes. Ontology classes in the same view are not traces."""
+
+    import psycopg
+
+    spans: list[dict] = []
+    watermark = {"table": "warehouse.v_node", "node_type": "decision", "max": ""}
+    with psycopg.connect(database_url) as conn:
+        rows = conn.execute(
+            """
+            SELECT node_id, properties, updated_ns
+            FROM warehouse.v_node
+            WHERE node_type = 'decision'
+            """
+        ).fetchall()
+    for node_id, properties, updated_ns in rows:
+        try:
+            payload = json.loads(properties or "{}")
+        except json.JSONDecodeError:
+            payload = {}
+        if not isinstance(payload, dict):
+            payload = {}
+        stamp = payload.get("recorded_at") or payload.get("timestamp") or updated_ns
+        attributes = {
+            "semantica.category": str(payload.get("category") or "")[:100],
+            "semantica.scenario": _clip(str(payload.get("scenario") or payload.get("content") or ""))[:_SCENARIO_CAP],
+            "semantica.reasoning": _clip(str(payload.get("reasoning") or ""))[:_REASONING_CAP],
+            "semantica.outcome": _clip(str(payload.get("outcome") or ""))[:_OUTCOME_CAP],
+            "semantica.decision_maker": str(payload.get("decision_maker") or "")[:200],
+            "semantica.caller_project": str(payload.get("caller_project") or "")[:200],
+            "semantica.caller_agent": str(payload.get("caller_agent") or "")[:200],
+            "semantica.run_id": str(payload.get("run_id") or ""),
+            "semantica.tx_id": str(payload.get("tx_id") or node_id or ""),
+        }
+        confidence = payload.get("confidence")
+        if isinstance(confidence, (int, float)) and not isinstance(confidence, bool):
+            attributes["semantica.confidence"] = confidence
+        spans.append(
+            make_span(
+                project="semantica",
+                session=session_id("semantica", "decision", str(payload.get("caller_project") or "semantica")),
+                name=str(payload.get("category") or "decision")[:160],
+                activity="decision",
+                capability="decisions",
+                service_name="semantica",
+                trace_key=f"decision:{node_id}",
+                start_time_unix_nano=_unix_ns(stamp),
+                input_value=attributes["semantica.scenario"],
+                output_value=_clip(str(payload.get("outcome") or payload.get("reasoning") or "")),
+                span_kind="CHAIN",
+                attributes=attributes,
+            )
+        )
+    return spans, watermark
+
+
+def build_archive(
+    dest: Path,
+    gaius_url: str,
+    metabase_url: str,
+    hermes_db: str,
+    semantica_url: str = "",
+    hx_python: str = "",
+    hx_cwd: str = "",
+) -> Path:
     pointer = load_bundled()
     members = [
         {
@@ -448,12 +735,30 @@ def build_archive(dest: Path, gaius_url: str, metabase_url: str, hermes_db: str)
         hermes, hermes_mark = hermes_spans(hermes_db)
     except Exception as exc:
         hermes, hermes_mark = [], {"table": "messages", "error": str(exc)}
+    try:
+        briefs, brief_mark = gaius_kb_spans(gaius_url)
+    except Exception as exc:
+        briefs, brief_mark = [], {"table": "briefs", "error": str(exc)}
+    gaius.extend(briefs)
+    script = str(Path(__file__).with_name("export_hx.py"))
+    hx_path = dest.parent / f".{dest.name}.hx.jsonl"
+    hx, hx_mark = hx_records(hx_python, script, hx_path, hx_cwd)
+    hx_path.unlink(missing_ok=True)
+    gaius.extend(hx)
+    try:
+        decisions, decision_mark = semantica_decision_spans(semantica_url) if semantica_url else ([], {"table": "warehouse.v_node", "skipped": "no url"})
+    except Exception as exc:
+        decisions, decision_mark = [], {"table": "warehouse.v_node", "error": str(exc)}
     by_project["gaius"] = gaius
     by_project["metabase"] = metabase
     by_project["hermes"] = hermes
+    by_project["semantica"] = decisions
     summary["watermark.gaius"] = json.dumps(gaius_mark)
+    summary["watermark.gaius.kb"] = json.dumps(brief_mark)
+    summary["watermark.gaius.hx"] = json.dumps(hx_mark)
     summary["watermark.metabase"] = json.dumps(metabase_mark)
     summary["watermark.hermes"] = json.dumps(hermes_mark)
+    summary["watermark.semantica"] = json.dumps(decision_mark)
     dest.mkdir(parents=True, exist_ok=True)
     for project, spans in by_project.items():
         relative = f"projects/{project}/spans.jsonl"
@@ -493,10 +798,21 @@ def main() -> None:
     parser.add_argument("--gaius-url", default="postgresql://127.0.0.1:5444/zndx_gaius")
     parser.add_argument("--metabase-url", default="postgresql://127.0.0.1:5432/metabase")
     parser.add_argument("--hermes-db", default="~/.hermes/state.db")
+    parser.add_argument("--semantica-url", default=os.environ.get("SEMANTICA_DATABASE_URL", "postgresql://127.0.0.1:5588/semantica"))
+    parser.add_argument("--hx-python", default=os.environ.get("OPTAGENT_GAIUS_PYTHON", "/home/rch/local/src/zndx/gaius/.devenv/state/venv/bin/python"))
+    parser.add_argument("--hx-cwd", default=os.environ.get("OPTAGENT_GAIUS_ROOT", "/home/rch/local/src/zndx/gaius"))
     args = parser.parse_args()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     dest = Path(args.out) / stamp
-    archive = build_archive(dest, args.gaius_url, args.metabase_url, args.hermes_db)
+    archive = build_archive(
+        dest,
+        args.gaius_url,
+        args.metabase_url,
+        args.hermes_db,
+        semantica_url=args.semantica_url,
+        hx_python=args.hx_python,
+        hx_cwd=args.hx_cwd,
+    )
     print(archive)
 
 

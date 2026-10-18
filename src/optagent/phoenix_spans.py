@@ -16,7 +16,7 @@ import json
 import uuid
 from pathlib import Path
 
-PEERS = frozenset({"gaius", "metabase", "hermes"})
+PEERS = frozenset({"gaius", "metabase", "hermes", "semantica"})
 _TRACE = uuid.UUID("6f707461-6765-4e74-8000-000000000001")
 
 
@@ -25,7 +25,7 @@ def session_id(peer: str, *parts: str) -> str:
 
     name = str(peer).strip()
     if name not in PEERS:
-        raise ValueError(f"peer must be gaius, metabase, or hermes, got {name!r}")
+        raise ValueError(f"peer must be one of {', '.join(sorted(PEERS))}, got {name!r}")
     local = ":".join(str(part).strip() for part in parts if str(part).strip())
     if not local:
         raise ValueError("session id needs a local part")
@@ -365,6 +365,10 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
         "semantica.entities",
         "aegir.genus_code",
         "aegir.genus_iri",
+        "aegir.genus_label",
+        "hermes.viz.kind",
+        "gaius.hx.technique",
+        "gaius.hx.summary_type",
         "sdg.iri",
         "sdg.spans",
     )
