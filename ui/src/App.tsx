@@ -1652,7 +1652,7 @@ function statRows(row: TraceStats): [string, string][] {
   if (row.total_cost != null) rows.push(["cost", String(row.total_cost)]);
   if (row.errors != null) rows.push(["errors", String(row.errors)]);
   if (row.undomain) rows.push(["no topic domain", String(row.undomain)]);
-  if (row.overwatch) rows.push(["overwatch", String(row.overwatch)]);
+  if (row.overwatch) rows.push(["overwatch sessions", String(row.overwatch)]);
   return rows;
 }
 
@@ -2140,7 +2140,7 @@ function TrailPanels({
                         ...(tracing.latency_ms != null ? [["latency", `${tracing.latency_ms} ms`] as [string, string]] : []),
                         ...(tracing.total_cost != null ? [["cost", String(tracing.total_cost)] as [string, string]] : []),
                         ...(tracing.errors != null ? [["errors", String(tracing.errors)] as [string, string]] : []),
-                        ...(tracing.overwatch ? [["overwatch", String(tracing.overwatch)] as [string, string]] : []),
+                        ...(tracing.overwatch ? [["overwatch sessions", String(tracing.overwatch)] as [string, string]] : []),
                       ]}
                     />
                     <p className="sum-section">Domains.</p>

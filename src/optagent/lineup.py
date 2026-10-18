@@ -322,7 +322,7 @@ def _fresh() -> dict:
         "cost": [],
         "errors": 0,
         "error_known": False,
-        "overwatch": 0,
+        "overwatch": set(),
         "leaves": {},
         "undomain": 0,
         "domains": {},
@@ -356,8 +356,8 @@ def _observe(bucket: dict, span: dict, *, nest: bool) -> None:
         bucket["error_known"] = True
         if attributes.get("error"):
             bucket["errors"] += 1
-    if attributes.get("overwatch.reason"):
-        bucket["overwatch"] += 1
+    if attributes.get("overwatch.reason") and sid:
+        bucket["overwatch"].add(sid)
     if not nest:
         return
     code = str(attributes.get("aegir.genus_code") or "")
@@ -383,7 +383,7 @@ def _publish(bucket: dict, *, nest: bool) -> dict:
         "latency_ms": round(sum(bucket["latency"]) / len(bucket["latency"]), 3) if bucket["latency"] else None,
         "total_cost": round(sum(bucket["cost"]), 6) if bucket["cost"] else None,
         "errors": bucket["errors"] if bucket["error_known"] else None,
-        "overwatch": bucket["overwatch"],
+        "overwatch": len(bucket["overwatch"]),
         "top_iris": [
             {"iri": iri, "count": leaves[iri]}
             for iri in sorted(leaves, key=lambda item: (-leaves[item], item))[:8]
@@ -473,7 +473,7 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
         cost = []
         errors = 0
         error_known = False
-        overwatch = 0
+        overwatch: set[str] = set()
         augmented = 0
         for span in rows:
             attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
@@ -505,8 +505,8 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
                 error_known = True
                 if attributes.get("error"):
                     errors += 1
-            if attributes.get("overwatch.reason"):
-                overwatch += 1
+            if attributes.get("overwatch.reason") and sid:
+                overwatch.add(sid)
         projects.append(
             {
                 "project": name,
@@ -521,7 +521,7 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
                 "latency_ms": round(sum(latency) / len(latency), 3) if latency else None,
                 "total_cost": round(sum(cost), 6) if cost else None,
                 "errors": errors if error_known else None,
-                "overwatch": overwatch,
+                "overwatch": len(overwatch),
             }
         )
     return {"window": window, "projects": projects}

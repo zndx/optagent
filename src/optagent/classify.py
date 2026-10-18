@@ -5,9 +5,9 @@
 The genus stays on the span. This stage asks TypeSafe which phrase of one to
 a few words states a published child of that genus, or a sibling when the
 admitted concept is itself a leaf. A whole window is not a link. None, a low
-confidence, and an IRI outside the offered set are not links. A readable
-admitted passage that yields no term is marked for Overwatch. This module
-does not start an ACP agent and does not log the API key.
+confidence, and an IRI outside the offered set are not links. Overwatch is recorded only when one session holds several admitted passages
+and none of them received a term link. A single miss is left unmarked. This
+module does not start an ACP agent and does not log the API key.
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ MAX_CANDIDATES = 4
 MAX_LINKS = 3
 MAX_PER_IRI = 2
 MAX_LINK_WORDS = 6
-OVERWATCH_REASON = "admitted-without-terms"
+OVERWATCH_REASON = "session-without-terms"
 _URL = "https://api.typesafe.ai/v1/systemone"
 _NONE = "none"
 _WORD = re.compile(r"[A-Za-z][A-Za-z'-]*")
@@ -318,10 +318,67 @@ def _stamp_usage(attributes: dict, body: dict) -> None:
             continue
 
 
-def _mark_overwatch(attributes: dict) -> None:
+def _clear_links(attributes: dict) -> None:
     attributes.pop("sdg.spans", None)
-    attributes["overwatch.reason"] = OVERWATCH_REASON
-    attributes["overwatch.phase"] = "classify"
+    attributes.pop("overwatch.reason", None)
+    attributes.pop("overwatch.phase", None)
+
+
+def _has_term_link(attributes: dict) -> bool:
+    spans = attributes.get("sdg.spans")
+    if not isinstance(spans, list):
+        return False
+    return any(isinstance(item, dict) and str(item.get("iri") or "").startswith("https://signals.zndx.org/sdg#") for item in spans)
+
+
+def _clear_overwatch(attributes: dict) -> bool:
+    changed = False
+    if "overwatch.reason" in attributes:
+        attributes.pop("overwatch.reason", None)
+        changed = True
+    if "overwatch.phase" in attributes:
+        attributes.pop("overwatch.phase", None)
+        changed = True
+    return changed
+
+
+def apply_session_overwatch(spans: list[dict]) -> tuple[int, bool]:
+    """Flag a session when several admitted passages all lack a term link.
+
+    An admitted passage is a readable genus window. One miss is not Overwatch.
+    A session that linked any of its admitted passages is not Overwatch.
+    """
+
+    groups: dict[str, list[dict]] = {}
+    changed = False
+    for span in spans:
+        attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else None
+        if not isinstance(attributes, dict):
+            continue
+        session_id = str(attributes.get("session.id") or "")
+        if not attributes.get("aegir.genus_code") or not session_id or not readable_segment(span_text(span)):
+            if _clear_overwatch(attributes):
+                changed = True
+            continue
+        groups.setdefault(session_id, []).append(span)
+    flagged = 0
+    for passages in groups.values():
+        linked = any(_has_term_link(span["attributes"]) for span in passages)
+        fail = len(passages) >= 2 and not linked
+        if fail:
+            flagged += 1
+        for span in passages:
+            attributes = span["attributes"]
+            if fail:
+                if attributes.get("overwatch.reason") != OVERWATCH_REASON:
+                    attributes["overwatch.reason"] = OVERWATCH_REASON
+                    changed = True
+                if attributes.get("overwatch.phase") != "classify":
+                    attributes["overwatch.phase"] = "classify"
+                    changed = True
+            elif _clear_overwatch(attributes):
+                changed = True
+    return flagged, changed
 
 
 def _already(attributes: dict) -> bool:
@@ -339,8 +396,8 @@ def classify_snapshot(
     """Replace whole-window links on admitted spans with short term links.
 
     Spans the aperture did not admit are left alone. An unreadable window is
-    not sent and is not an Overwatch passage. A call that fails leaves the
-    span's existing links in place.
+    not sent. A call that fails leaves the span's existing links in place.
+    Overwatch is applied to the whole session after classification.
     """
 
     if lexicon is None:
@@ -368,19 +425,18 @@ def classify_snapshot(
                 continue
             if _already(attributes):
                 continue
-            examined += 1
             text = span_text(span)
             if not readable_segment(text):
                 if attributes.get("sdg.spans"):
                     attributes.pop("sdg.spans", None)
                     changed = True
                 continue
+            examined += 1
             genus_iri = str(attributes.get("aegir.genus_iri") or "")
             points = choice_points(lexicon, genus_iri)
             candidates = propose_spans(text, points) if points else []
             if not points or not candidates:
-                _mark_overwatch(attributes)
-                overwatch += 1
+                _clear_links(attributes)
                 changed = True
                 continue
             try:
@@ -398,22 +454,24 @@ def classify_snapshot(
                 attributes.pop("overwatch.phase", None)
                 linked += 1
             else:
-                _mark_overwatch(attributes)
-                overwatch += 1
+                _clear_links(attributes)
             changed = True
-        if changed:
+        flagged, flags_changed = apply_session_overwatch(spans)
+        overwatch += flagged
+        if changed or flags_changed:
             write_jsonl(path, spans)
     document_path = root / "signals-snapshot.json"
     if document_path.is_file():
         document = json.loads(document_path.read_text(encoding="utf-8"))
         summary = document.setdefault("summary", {})
-        summary["classify.examined"] = str(examined)
-        summary["classify.called"] = str(called)
-        summary["classify.linked"] = str(linked)
+        if called or linked or "classify.called" not in summary:
+            summary["classify.examined"] = str(examined)
+            summary["classify.called"] = str(called)
+            summary["classify.linked"] = str(linked)
+            summary["classify.errors"] = str(errors)
+            summary["classify.model"] = MODEL
+            summary["classify.tau"] = str(TAU)
         summary["classify.overwatch"] = str(overwatch)
-        summary["classify.errors"] = str(errors)
-        summary["classify.model"] = MODEL
-        summary["classify.tau"] = str(TAU)
         document_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8")
     result = {
         "examined": examined,

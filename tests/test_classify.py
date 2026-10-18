@@ -147,7 +147,7 @@ def test_links_keep_the_floor_and_the_density_cap() -> None:
     assert sum(item["iri"] == LINEAGE for item in crowded) <= 2
 
 
-def test_admitted_passage_without_a_term_is_overwatch(tmp_path: Path) -> None:
+def test_overwatch_requires_a_session_of_misses(tmp_path: Path) -> None:
     project = tmp_path / "projects" / "hermes"
     project.mkdir(parents=True)
     stamp = 1_700_000_000_000_000_000
@@ -185,6 +185,42 @@ def test_admitted_passage_without_a_term_is_overwatch(tmp_path: Path) -> None:
             "sdg.spans": [{"start": 0, "end": len(CONSCIOUSNESS), "text": CONSCIOUSNESS, "iri": QUALITY}],
         },
     )
+    bare = (
+        "The afternoon conversation stayed with the paper and never settled on a concrete example worth citing today."
+    )
+    missed = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:bare",
+        name="missed-again",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="missed-again",
+        start_time_unix_nano=stamp,
+        output_value=bare,
+        attributes={
+            "aegir.genus_code": "16.2.4",
+            "aegir.genus_iri": QUALITY,
+            "aegir.genus_label": "Data Profiling, Quality and Observability",
+            "overwatch.reason": "admitted-without-terms",
+        },
+    )
+    partner = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:bare",
+        name="missed-too",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="missed-too",
+        start_time_unix_nano=stamp,
+        output_value=CONSCIOUSNESS,
+        attributes={
+            "aegir.genus_code": "16.2.4",
+            "aegir.genus_iri": QUALITY,
+            "aegir.genus_label": "Data Profiling, Quality and Observability",
+        },
+    )
     dump = make_span(
         project="hermes",
         session="hermes:agent-rtc:dump",
@@ -199,7 +235,7 @@ def test_admitted_passage_without_a_term_is_overwatch(tmp_path: Path) -> None:
     )
     from optagent.phoenix_spans import write_jsonl
 
-    write_jsonl(project / "spans.jsonl", [replay, miss, dump])
+    write_jsonl(project / "spans.jsonl", [replay, miss, missed, partner, dump])
     (tmp_path / "signals-snapshot.json").write_text('{"summary":{}}\n', encoding="utf-8")
     calls = []
 
@@ -231,8 +267,10 @@ def test_admitted_passage_without_a_term_is_overwatch(tmp_path: Path) -> None:
     assert written["replay"]["attributes"]["typesafe.input_tokens"] == 40
     assert "overwatch.reason" not in written["replay"]["attributes"]
     assert written["replay"]["attributes"]["aegir.genus_iri"] == LINEAGE
-    assert written["miss"]["attributes"]["overwatch.reason"] == "admitted-without-terms"
+    assert "overwatch.reason" not in written["miss"]["attributes"]
     assert "sdg.spans" not in written["miss"]["attributes"]
+    assert written["missed-again"]["attributes"]["overwatch.reason"] == "session-without-terms"
+    assert written["missed-too"]["attributes"]["overwatch.reason"] == "session-without-terms"
     assert "overwatch.reason" not in written["dump"]["attributes"]
     assert calls and "secret" not in json.dumps(calls)
     report = timeline_report(list(written.values()), now_ms=1_700_000_000_000 + 86_400_000, window="365d")
