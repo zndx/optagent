@@ -37,6 +37,11 @@ def test_settings_page_uses_the_kumo_switch() -> None:
         assert title in source
     assert "Training" not in source
     assert "sum-panel" in source
+    assert "Close panel" in source
+    assert "This term is not in the current release." in source
+    assert "This table is not in the current release." in source
+    assert "/summary?open=" in source
+    assert "encodeURIComponent(part.iri)" in source
     assert 'id="terminal"' in source
     assert "Ghostty not connected" in source
     assert "height={28}" in source

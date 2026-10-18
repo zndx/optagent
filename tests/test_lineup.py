@@ -1,7 +1,9 @@
 # Copyright 2026 zndx
 # SPDX-License-Identifier: Apache-2.0
 
-from optagent.lineup import SDG_PIN, build_lineup, token_count
+from pathlib import Path
+
+from optagent.lineup import SDG_PIN, build_lineup, load_lexicon, load_schema, token_count
 from optagent.phoenix_spans import make_span, rich_segments
 
 
@@ -55,3 +57,62 @@ def test_an_unknown_iri_does_not_create_a_lexicon_panel() -> None:
     assert report["top_iris"][0]["iri"].endswith("NOT_A_PUBLISHED_TERM")
     assert token_count(span) == len("The specimen is accessioned. The assay is run.".split())
     assert rich_segments(span["attributes"]["output.value"], span["attributes"]["sdg.spans"])
+
+
+def test_broader_is_a_lexicon_link_and_not_a_class(tmp_path: Path) -> None:
+    vocab = tmp_path / "vocabulary"
+    vocab.mkdir()
+    (vocab / "vocabulary.ttl").write_text(
+        "\n".join(
+            [
+                '<https://signals.zndx.org/sdg#PARENT> a skos:Concept ;',
+                '    skos:notation "1" ;',
+                '    skos:prefLabel "Parent" ;',
+                '    skos:definition "The parent topic." .',
+                "",
+                '<https://signals.zndx.org/sdg#CHILD> a skos:Concept ;',
+                '    skos:notation "1.1" ;',
+                '    skos:prefLabel "Child" ;',
+                '    skos:definition "The child topic." ;',
+                "    skos:broader <https://signals.zndx.org/sdg#PARENT> .",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    items = {item["iri"]: item for item in load_lexicon(tmp_path)}
+    child = items["https://signals.zndx.org/sdg#CHILD"]
+    parent = items["https://signals.zndx.org/sdg#PARENT"]
+    assert child["broader"] == ["https://signals.zndx.org/sdg#PARENT"]
+    assert "subClassOf" not in child
+    assert parent["narrower"] == ["https://signals.zndx.org/sdg#CHILD"]
+    assert child["narrower"] == []
+
+
+def test_schema_foreign_keys_are_table_links(tmp_path: Path) -> None:
+    ddl = tmp_path / "ddl" / "run"
+    ddl.mkdir(parents=True)
+    (ddl / "ddl.sql").write_text(
+        "\n".join(
+            [
+                "CREATE TABLE specimen (",
+                "  id VARCHAR(255) NOT NULL,",
+                "  volume DECIMAL(38,9),",
+                "  PRIMARY KEY (id)",
+                ");",
+                "CREATE TABLE assay (",
+                "  id VARCHAR(255) NOT NULL,",
+                "  run_on VARCHAR(255) NOT NULL,",
+                "  PRIMARY KEY (id)",
+                ");",
+                "ALTER TABLE assay ADD FOREIGN KEY (run_on) REFERENCES specimen(id);",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    tables = {item["name"]: item for item in load_schema(tmp_path)}
+    assert tables["specimen"]["columns"] == ["id", "volume"]
+    assert tables["specimen"]["refs"] == []
+    assert tables["assay"]["columns"] == ["id", "run_on"]
+    assert tables["assay"]["refs"] == ["specimen"]

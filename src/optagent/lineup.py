@@ -32,7 +32,16 @@ _NOTE = re.compile(r'skos:notation\s+"([^"]+)"')
 _LABEL = re.compile(r'skos:prefLabel\s+"([^"]+)"')
 _DEFN = re.compile(r'skos:definition\s+"([^"]+)"')
 _TABLE = re.compile(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?([A-Za-z0-9_\.]+)", re.I)
+_BROADER = re.compile(r"skos:broader\s+<(https://signals\.zndx\.org/sdg#[^>]+)>")
+_FK = re.compile(
+    r"ALTER TABLE\s+([A-Za-z0-9_\.]+)\s+ADD\s+FOREIGN KEY\s*\([^)]*\)\s+REFERENCES\s+([A-Za-z0-9_\.]+)",
+    re.I,
+)
+_COLUMN = re.compile(r"^\s*([A-Za-z_][A-Za-z0-9_]*)\s+[A-Za-z]")
+_SKIP_COLUMN = {"PRIMARY", "FOREIGN", "CONSTRAINT", "UNIQUE", "CHECK"}
 _WORD = re.compile(r"\S+")
+_LEXICON_CACHE: dict[tuple, list[dict]] = {}
+_SCHEMA_CACHE: dict[tuple, list[dict]] = {}
 
 
 def checkout_sha(root: Path | None) -> str:
@@ -58,40 +67,115 @@ def corpora_root() -> Path | None:
     return None
 
 
+def _file_stamp(paths: list[Path]) -> tuple:
+    stamped = []
+    for path in paths:
+        stamped.append((str(path), path.stat().st_mtime_ns if path.is_file() else 0))
+    return tuple(stamped)
+
+
 def load_lexicon(root: Path | None) -> list[dict]:
+    """Published SKOS concepts. ``broader`` is the skos:broader link, not a class axiom."""
+
     if root is None:
         return []
+    paths = [root / "vocabulary" / "vocabulary.ttl", root / "vocabulary" / "domain-concepts.ttl"]
+    key = _file_stamp(paths)
+    cached = _LEXICON_CACHE.get(key)
+    if cached is not None:
+        return cached
     concepts: dict[str, dict] = {}
-    for path in (root / "vocabulary" / "vocabulary.ttl", root / "vocabulary" / "domain-concepts.ttl"):
+    for path in paths:
         if not path.is_file():
             continue
         text = path.read_text(encoding="utf-8", errors="replace")
         for match in _CONCEPT.finditer(text):
             iri = match.group(1)
             body = match.group("body")
+            broader: list[str] = []
+            for parent in _BROADER.findall(body):
+                if parent not in broader:
+                    broader.append(parent)
             concepts[iri] = {
                 "iri": iri,
                 "code": (_NOTE.search(body).group(1) if _NOTE.search(body) else ""),
                 "label": (_LABEL.search(body).group(1) if _LABEL.search(body) else iri.rsplit("#", 1)[-1]),
                 "definition": (_DEFN.search(body).group(1) if _DEFN.search(body) else ""),
+                "broader": broader,
             }
-    return [concepts[iri] for iri in sorted(concepts)]
+    children: dict[str, list[str]] = {}
+    for item in concepts.values():
+        for parent in item["broader"]:
+            kids = children.setdefault(parent, [])
+            if item["iri"] not in kids:
+                kids.append(item["iri"])
+    for item in concepts.values():
+        item["narrower"] = sorted(children.get(item["iri"], []))
+    loaded = [concepts[iri] for iri in sorted(concepts)]
+    _LEXICON_CACHE[key] = loaded
+    return loaded
+
+
+def _table_shape(text: str) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    columns: dict[str, list[str]] = {}
+    name = ""
+    depth = 0
+    for line in text.splitlines():
+        if line.lstrip().startswith("--"):
+            continue
+        if depth == 0:
+            match = _TABLE.search(line)
+            if match and "(" in line:
+                name = match.group(1)
+                columns.setdefault(name, [])
+                depth = line.count("(") - line.count(")")
+            continue
+        depth += line.count("(") - line.count(")")
+        if depth <= 0:
+            name = ""
+            depth = 0
+            continue
+        column = _COLUMN.match(line)
+        if column and column.group(1).upper() not in _SKIP_COLUMN:
+            columns[name].append(column.group(1))
+    refs: dict[str, list[str]] = {}
+    for match in _FK.finditer(text):
+        source, target = match.group(1), match.group(2)
+        bucket = refs.setdefault(source, [])
+        if target not in bucket:
+            bucket.append(target)
+    return columns, refs
 
 
 def load_schema(root: Path | None) -> list[dict]:
     if root is None:
         return []
+    paths = sorted((root / "ddl").rglob("ddl.sql")) + sorted((root / "ddl-comprehensive").rglob("ddl.sql"))
+    key = _file_stamp(paths)
+    cached = _SCHEMA_CACHE.get(key)
+    if cached is not None:
+        return cached
     tables: list[dict] = []
     seen: set[str] = set()
-    for path in sorted((root / "ddl").rglob("ddl.sql")) + sorted((root / "ddl-comprehensive").rglob("ddl.sql")):
+    for path in paths:
         if not path.is_file():
             continue
-        for match in _TABLE.finditer(path.read_text(encoding="utf-8", errors="replace")):
+        text = path.read_text(encoding="utf-8", errors="replace")
+        columns, refs = _table_shape(text)
+        for match in _TABLE.finditer(text):
             name = match.group(1)
             if name in seen:
                 continue
             seen.add(name)
-            tables.append({"name": name, "location": str(path.relative_to(root))})
+            tables.append(
+                {
+                    "name": name,
+                    "location": str(path.relative_to(root)),
+                    "columns": columns.get(name, []),
+                    "refs": refs.get(name, []),
+                }
+            )
+    _SCHEMA_CACHE[key] = tables
     return tables
 
 

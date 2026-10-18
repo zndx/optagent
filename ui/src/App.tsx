@@ -1,5 +1,5 @@
 import { Select, Switch } from "@cloudflare/kumo";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { applyColorMode, type ColorMode } from "./theme/colorMode";
 
@@ -23,8 +23,15 @@ type Brand = {
 type Panel = { id: string; title: string; project: string; kind: string; body: string };
 type SummaryGroup = { id: string; title: string; items: string[] };
 type LineupRoot = { id: string; title: string; live?: boolean; entries?: string[] };
-type LineupConcept = { iri: string; code: string; label: string; definition: string };
-type LineupTable = { name: string; location: string };
+type LineupConcept = {
+  iri: string;
+  code: string;
+  label: string;
+  definition: string;
+  broader?: string[];
+  narrower?: string[];
+};
+type LineupTable = { name: string; location: string; columns?: string[]; refs?: string[] };
 type TracingProject = {
   project: string;
   traces: number;
@@ -832,12 +839,27 @@ const SESSION_CATEGORIES = [
   ["all", "All"],
 ] as const;
 
-function RichSentence({ parts }: { parts: { text: string; iri?: string; label?: string }[] }) {
+function RichSentence({
+  parts,
+  onOpen,
+}: {
+  parts: { text: string; iri?: string; label?: string }[];
+  onOpen?: (iri: string) => void;
+}) {
   return (
     <div className="rich-body">
       {parts.map((part, index) =>
         part.iri ? (
-          <a key={index} href={part.iri} title={part.label || part.iri}>
+          <a
+            key={index}
+            href={`/summary?open=${encodeURIComponent(part.iri)}`}
+            title={part.label || part.iri}
+            onClick={(event) => {
+              if (!onOpen || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+              event.preventDefault();
+              onOpen(part.iri || "");
+            }}
+          >
             {part.text}
           </a>
         ) : (
@@ -1303,26 +1325,431 @@ function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void 
   );
 }
 
+type TrailStop =
+  | { kind: "root"; id: string }
+  | { kind: "lexicon"; iri: string }
+  | { kind: "schema"; name: string }
+  | { kind: "tracing"; project: string }
+  | { kind: "session"; id: string };
+
+const TRAIL_STORAGE = "optagent:summary-trail";
+const ROOT_TITLES: Record<string, string> = { archive: "ARCHIVE", current: "CURRENT", scratch: "SCRATCH" };
+
+function trailKey(stop: TrailStop): string {
+  if (stop.kind === "root") return `root:${stop.id}`;
+  if (stop.kind === "lexicon") return `lexicon:${stop.iri}`;
+  if (stop.kind === "schema") return `schema:${stop.name}`;
+  if (stop.kind === "tracing") return `tracing:${stop.project}`;
+  return `session:${stop.id}`;
+}
+
+function isTrailStop(value: unknown): value is TrailStop {
+  if (!value || typeof value !== "object") return false;
+  const stop = value as TrailStop;
+  if (stop.kind === "root") return stop.id === "archive" || stop.id === "current" || stop.id === "scratch";
+  if (stop.kind === "lexicon") return typeof stop.iri === "string" && stop.iri.startsWith("https://signals.zndx.org/sdg#");
+  if (stop.kind === "schema") return typeof stop.name === "string" && stop.name.length > 0 && !stop.name.includes("/");
+  if (stop.kind === "tracing") return typeof stop.project === "string" && stop.project.length > 0;
+  if (stop.kind === "session") return typeof stop.id === "string" && stop.id.length > 0;
+  return false;
+}
+
+function openToken(stop: TrailStop): string | null {
+  if (stop.kind === "lexicon") return stop.iri;
+  if (stop.kind === "schema") return `schema:${stop.name}`;
+  if (stop.kind === "session") return `session:${stop.id}`;
+  if (stop.kind === "tracing") return `tracing:${stop.project}`;
+  return null;
+}
+
+function stopFromToken(token: string): TrailStop | null {
+  if (token.startsWith("https://signals.zndx.org/sdg#")) return { kind: "lexicon", iri: token };
+  if (token.startsWith("schema:")) return { kind: "schema", name: token.slice("schema:".length) };
+  if (token.startsWith("session:")) return { kind: "session", id: token.slice("session:".length) };
+  if (token.startsWith("tracing:")) return { kind: "tracing", project: token.slice("tracing:".length) };
+  return null;
+}
+
+function readOpen(): TrailStop | null {
+  const token = new URLSearchParams(window.location.search).get("open");
+  return token ? stopFromToken(token) : null;
+}
+
+function loadStoredTrail(): { root: string; trail: TrailStop[] } | null {
+  try {
+    const raw = sessionStorage.getItem(TRAIL_STORAGE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { root?: unknown; trail?: unknown };
+    const root = parsed.root === "archive" || parsed.root === "current" || parsed.root === "scratch" ? parsed.root : "current";
+    if (!Array.isArray(parsed.trail)) return null;
+    const trail = parsed.trail.filter(isTrailStop);
+    return trail.length ? { root, trail } : null;
+  } catch {
+    return null;
+  }
+}
+
+function projectFromTrail(stops: TrailStop[]): string {
+  const tracing = stops.find((stop) => stop.kind === "tracing");
+  return tracing && tracing.kind === "tracing" ? tracing.project : "";
+}
+
+function initialTrail(): TrailStop[] {
+  const opened = readOpen();
+  const stored = loadStoredTrail();
+  if (opened && stored?.trail.some((stop) => trailKey(stop) === trailKey(opened))) return stored.trail;
+  if (opened) return [opened];
+  if (stored?.trail.length) return stored.trail;
+  return [{ kind: "root", id: "current" }];
+}
+
+function Follow({ token, label, onOpen }: { token: string; label: string; onOpen: (token: string) => void }) {
+  return (
+    <a
+      href={`/summary?open=${encodeURIComponent(token)}`}
+      title={token}
+      onClick={(event) => {
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+        event.preventDefault();
+        onOpen(token);
+      }}
+    >
+      {label}
+    </a>
+  );
+}
+
+function conceptLabel(iri: string, byIri: Map<string, LineupConcept>): string {
+  return byIri.get(iri)?.label || iri.split("#").pop() || iri;
+}
+
+function TermLinks({ iris, byIri, onOpen }: { iris: string[]; byIri: Map<string, LineupConcept>; onOpen: (token: string) => void }) {
+  return iris.map((iri, index) => (
+    <span key={iri}>
+      {index > 0 ? " · " : null}
+      <Follow token={iri} label={conceptLabel(iri, byIri)} onOpen={onOpen} />
+    </span>
+  ));
+}
+
+function NameLinks({ names, onOpen }: { names: string[]; onOpen: (token: string) => void }) {
+  return names.map((name, index) => (
+    <span key={name}>
+      {index > 0 ? " · " : null}
+      <Follow token={`schema:${name}`} label={name} onOpen={onOpen} />
+    </span>
+  ));
+}
+
+function TrailPanels({
+  trail,
+  view,
+  byIri,
+  byCode,
+  byTable,
+  windowId,
+  loading,
+  onWindow,
+  onOpen,
+  onClose,
+}: {
+  trail: TrailStop[];
+  view: LineupDoc;
+  byIri: Map<string, LineupConcept>;
+  byCode: Map<string, LineupConcept>;
+  byTable: Map<string, LineupTable>;
+  windowId: string;
+  loading: boolean;
+  onWindow: (windowId: string) => void;
+  onOpen: (index: number, token: string) => void;
+  onClose: (index: number) => void;
+}) {
+  return (
+    <>
+      {trail.map((stop, index) => {
+        const closer = trail.length > 1 ? (
+          <button type="button" className="sum-panel-close" aria-label="Close panel" onClick={() => onClose(index)}>
+            close
+          </button>
+        ) : null;
+        if (stop.kind === "root") {
+          const entry = view.roots.find((item) => item.id === stop.id);
+          let body = "The published SDG release is installed. An IRI in a trace opens its lexicon panel.";
+          if (stop.id === "scratch") {
+            body = entry?.live
+              ? "Live trace analysis is connected."
+              : "This deployment reads snapshots. Live trace analysis is not connected.";
+          } else if (stop.id === "archive") {
+            body = (entry?.entries || []).join("\n") || "No frozen snapshots yet.";
+          } else if (!view.release_installed) {
+            body = "The published SDG release is not installed on this host.";
+          }
+          return (
+            <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+              <header className="sum-panel-head">
+                <h2>{ROOT_TITLES[stop.id] || stop.id}</h2>
+                {closer}
+              </header>
+              <div className="sum-panel-body">{body}</div>
+            </article>
+          );
+        }
+        if (stop.kind === "lexicon") {
+          const term = byIri.get(stop.iri);
+          const local = stop.iri.split("#").pop() || stop.iri;
+          return (
+            <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+              <header className="sum-panel-head">
+                <h2>{term?.label || local}</h2>
+                {closer}
+                {term?.code ? <span className="muted sum-panel-meta">{term.code}</span> : null}
+              </header>
+              <div className="sum-panel-body">
+                {term ? <p>{term.definition || "No definition in this release."}</p> : <p>This term is not in the current release.</p>}
+                <p className="mono">{stop.iri}</p>
+                {term?.broader?.length ? (
+                  <p>
+                    broader <TermLinks iris={term.broader} byIri={byIri} onOpen={(token) => onOpen(index, token)} />
+                  </p>
+                ) : null}
+                {term?.narrower?.length ? (
+                  <p>
+                    narrower <TermLinks iris={term.narrower} byIri={byIri} onOpen={(token) => onOpen(index, token)} />
+                  </p>
+                ) : null}
+              </div>
+            </article>
+          );
+        }
+        if (stop.kind === "schema") {
+          const table = byTable.get(stop.name);
+          const inboundAll = view.schema.filter((item) => (item.refs || []).includes(stop.name)).map((item) => item.name);
+          const inbound = inboundAll.slice(0, 16);
+          const inboundMore = inboundAll.length - inbound.length;
+          return (
+            <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+              <header className="sum-panel-head">
+                <h2>{stop.name}</h2>
+                {closer}
+              </header>
+              <div className="sum-panel-body">
+                {table ? <p className="mono">{table.location}</p> : <p>This table is not in the current release.</p>}
+                {table?.columns?.length ? (
+                  <ul className="sum-links">
+                    {table.columns.map((column) => (
+                      <li key={column} className="mono">{column}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {table?.refs?.length ? (
+                  <p>
+                    references <NameLinks names={table.refs} onOpen={(token) => onOpen(index, token)} />
+                  </p>
+                ) : null}
+                {inbound.length ? (
+                  <p>
+                    referenced by <NameLinks names={inbound} onOpen={(token) => onOpen(index, token)} />
+                    {inboundMore ? <span className="muted"> · {inboundMore} more</span> : null}
+                  </p>
+                ) : null}
+              </div>
+            </article>
+          );
+        }
+        if (stop.kind === "tracing") {
+          const tracing = view.tracing.projects.find((item) => item.project === stop.project);
+          return (
+            <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+              <header className="sum-panel-head">
+                <h2>{stop.project}</h2>
+                {closer}
+                <select aria-label="Window" value={windowId} onChange={(event) => onWindow(event.target.value)}>
+                  {WINDOWS.map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </header>
+              <div className="sum-panel-body">
+                {tracing ? (
+                  <>
+                    <p>{tracing.traces} traces · {tracing.sessions} sessions · {tracing.tokens} tokens · {tracing.grounded} grounded</p>
+                    <p className="muted">{tracing.augmented} augmented</p>
+                    <p>
+                      Genera{" "}
+                      {tracing.genera.length
+                        ? tracing.genera.map((item, genusIndex) => {
+                            const term = byCode.get(item.code);
+                            const gap = genusIndex > 0 ? " · " : "";
+                            return term ? (
+                              <span key={item.code}>
+                                {gap}
+                                <Follow token={term.iri} label={`${item.code} ${item.count}`} onOpen={(token) => onOpen(index, token)} />
+                              </span>
+                            ) : (
+                              <span key={item.code}>{gap}{item.code} {item.count}</span>
+                            );
+                          })
+                        : "—"}
+                    </p>
+                    <p>
+                      Leaves{" "}
+                      {tracing.top_iris.length
+                        ? tracing.top_iris.map((item, leafIndex) => (
+                            <span key={item.iri}>
+                              {leafIndex > 0 ? " · " : null}
+                              <Follow
+                                token={item.iri}
+                                label={`${item.iri.split("#").pop()} ${item.count}`}
+                                onOpen={(token) => onOpen(index, token)}
+                              />
+                            </span>
+                          ))
+                        : "—"}
+                    </p>
+                    {tracing.latency_ms != null ? <p>Latency {tracing.latency_ms} ms</p> : null}
+                    {tracing.total_cost != null ? <p>Cost {tracing.total_cost}</p> : null}
+                    {tracing.errors != null ? <p>Errors {tracing.errors}</p> : null}
+                  </>
+                ) : (
+                  <p>{loading ? "Loading traces…" : "No traces in this window."}</p>
+                )}
+                {loading && view.sessions.length === 0 ? <p className="muted">Loading sessions…</p> : null}
+                {view.sessions.length ? (
+                  <ul className="sum-links">
+                    {view.sessions.map((session) => (
+                      <li key={session.id}>
+                        <Follow token={`session:${session.id}`} label={session.id} onOpen={(token) => onOpen(index, token)} />
+                        <span className="muted"> {session.traces}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            </article>
+          );
+        }
+        const session = view.sessions.find((item) => item.id === stop.id);
+        return (
+          <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+            <header className="sum-panel-head">
+              <h2>{stop.id}</h2>
+              {closer}
+              <span className="muted sum-panel-meta">{session ? `${session.traces} traces` : ""}</span>
+            </header>
+            <div className="sum-panel-body">
+              {session ? session.items.map((item, itemIndex) => (
+                <div key={`${item.generated_at}-${itemIndex}`}>
+                  <p className="muted">
+                    generated {formatStamp(item.generated_at)}
+                    {item.augmented_at ? ` · augmented ${formatStamp(item.augmented_at)}` : ""}
+                  </p>
+                  {item.rich.some((part) => part.iri) ? (
+                    <RichSentence parts={item.rich} onOpen={(iri) => onOpen(index, iri)} />
+                  ) : (
+                    <p>{item.output}</p>
+                  )}
+                </div>
+              )) : (
+                <p>{loading ? "Loading sessions…" : "This session is not in the loaded project window."}</p>
+              )}
+            </div>
+          </article>
+        );
+      })}
+    </>
+  );
+}
+
 function LineupSummary({ lineup }: { lineup: LineupDoc }) {
-  const [root, setRoot] = useState("current");
+  const stored = useRef(loadStoredTrail());
+  const [root, setRoot] = useState(stored.current?.root || "current");
   const [windowId, setWindowId] = useState(lineup.tracing.window || "365d");
-  const [project, setProject] = useState("");
-  const [concept, setConcept] = useState("");
-  const [table, setTable] = useState("");
+  const [trail, setTrail] = useState<TrailStop[]>(initialTrail);
+  const [project, setProject] = useState(projectFromTrail(initialTrail()));
   const [view, setView] = useState<LineupDoc>(lineup);
+  const [loading, setLoading] = useState(false);
+  const trailRef = useRef<HTMLElement>(null);
+  const prevLen = useRef(trail.length);
   useEffect(() => {
     const params = new URLSearchParams({ window: windowId });
     if (project) params.set("project", project);
+    let cancelled = false;
+    setLoading(true);
     fetch(`/api/optagent/v1/summary?${params.toString()}`)
       .then((response) => response.json())
       .then((data: SummaryDoc) => {
-        if (data.lineup) setView(data.lineup);
+        if (!cancelled && data.lineup) setView(data.lineup);
       })
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, [windowId, project]);
-  const tracing = view.tracing.projects.find((item) => item.project === project);
-  const term = view.lexicon.find((item) => item.iri === concept);
-  const schema = view.schema.find((item) => item.name === table);
+  useEffect(() => {
+    const wanted = projectFromTrail(trail);
+    setProject((current) => (current === wanted ? current : wanted));
+  }, [trail]);
+  useEffect(() => {
+    try {
+      sessionStorage.setItem(TRAIL_STORAGE, JSON.stringify({ root, trail }));
+    } catch {
+      /* sessionStorage unavailable */
+    }
+    const node = trailRef.current;
+    if (node) node.scrollTo({ left: node.scrollWidth });
+  }, [trail, root]);
+  useEffect(() => {
+    const focused = trail[trail.length - 1];
+    if (!focused) return;
+    const extend = trail.length > prevLen.current;
+    prevLen.current = trail.length;
+    const token = openToken(focused);
+    const url = new URL(window.location.href);
+    if (token) url.searchParams.set("open", token);
+    else url.searchParams.delete("open");
+    const next = `${url.pathname}${url.search}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (next === current) return;
+    if (extend) history.pushState(null, "", next);
+    else history.replaceState(null, "", next);
+  }, [trail]);
+  useEffect(() => {
+    const onPop = () => {
+      const opened = readOpen();
+      setTrail((current) => {
+        if (!opened) return [{ kind: "root", id: root }];
+        const key = trailKey(opened);
+        const index = current.findIndex((stop) => trailKey(stop) === key);
+        if (index >= 0) return current.slice(0, index + 1);
+        return [...current, opened];
+      });
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [root]);
+  const byIri = useMemo(() => new Map(view.lexicon.map((item) => [item.iri, item])), [view.lexicon]);
+  const byCode = useMemo(() => {
+    const map = new Map<string, LineupConcept>();
+    for (const item of view.lexicon) {
+      if (item.code && !map.has(item.code)) map.set(item.code, item);
+    }
+    return map;
+  }, [view.lexicon]);
+  const byTable = useMemo(() => new Map(view.schema.map((item) => [item.name, item])), [view.schema]);
+  const openFrom = (index: number, href: string) => {
+    const next = stopFromToken(href) || (byTable.has(href) ? { kind: "schema" as const, name: href } : null);
+    if (!next || !isTrailStop(next)) return;
+    setTrail((current) => {
+      const kept = current.slice(0, index + 1);
+      const last = kept[kept.length - 1];
+      if (last && trailKey(last) === trailKey(next)) return kept;
+      return [...kept, next];
+    });
+  };
+  const seed = trail[0];
   return (
     <div className="sum-page">
       <aside className="sum-rail" aria-label="Summary lineup">
@@ -1333,7 +1760,10 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
             size="sm"
             value={root}
             onValueChange={(value) => {
-              if (value) setRoot(String(value));
+              if (!value) return;
+              const id = String(value);
+              setRoot(id);
+              setTrail([{ kind: "root", id }]);
             }}
             items={["archive", "current", "scratch"].map((id) => ({
               value: id,
@@ -1347,11 +1777,8 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
             <button
               key={item.iri}
               type="button"
-              className={concept === item.iri ? "sum-tab active" : "sum-tab"}
-              onClick={() => {
-                setConcept(item.iri);
-                setRoot("current");
-              }}
+              className={seed?.kind === "lexicon" && seed.iri === item.iri ? "sum-tab active" : "sum-tab"}
+              onClick={() => setTrail([{ kind: "lexicon", iri: item.iri }])}
             >
               {item.label}
             </button>
@@ -1363,11 +1790,8 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
             <button
               key={item.name}
               type="button"
-              className={table === item.name ? "sum-tab active" : "sum-tab"}
-              onClick={() => {
-                setTable(item.name);
-                setRoot("current");
-              }}
+              className={seed?.kind === "schema" && seed.name === item.name ? "sum-tab active" : "sum-tab"}
+              onClick={() => setTrail([{ kind: "schema", name: item.name }])}
             >
               {item.name}
             </button>
@@ -1379,8 +1803,8 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
             <button
               key={item.project}
               type="button"
-              className={project === item.project ? "sum-tab active" : "sum-tab"}
-              onClick={() => setProject(item.project)}
+              className={seed?.kind === "tracing" && seed.project === item.project ? "sum-tab active" : "sum-tab"}
+              onClick={() => setTrail([{ kind: "tracing", project: item.project }])}
             >
               {item.project}
             </button>
@@ -1392,89 +1816,19 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
           {view.pin_matches === false ? " · pin differs" : ""}
         </div>
       </aside>
-      <section className="sum-trail" aria-label="Lineup">
-        {root === "scratch" ? (
-          <article className="sum-panel">
-            <header className="sum-panel-head"><h2>SCRATCH</h2></header>
-            <div className="sum-panel-body">
-              {view.roots.find((item) => item.id === "scratch")?.live
-                ? "Live trace analysis is connected."
-                : "This deployment reads snapshots. Live trace analysis is not connected."}
-            </div>
-          </article>
-        ) : null}
-        {root === "archive" ? (
-          <article className="sum-panel">
-            <header className="sum-panel-head"><h2>ARCHIVE</h2></header>
-            <div className="sum-panel-body">
-              {(view.roots.find((item) => item.id === "archive")?.entries || []).join("\n") || "No frozen snapshots yet."}
-            </div>
-          </article>
-        ) : null}
-        {root === "current" && !view.release_installed ? (
-          <article className="sum-panel">
-            <header className="sum-panel-head"><h2>CURRENT</h2></header>
-            <div className="sum-panel-body">The published SDG release is not installed on this host.</div>
-          </article>
-        ) : null}
-        {term ? (
-          <article className="sum-panel">
-            <header className="sum-panel-head">
-              <h2>{term.label}</h2>
-              <span className="muted sum-panel-meta">{term.code}</span>
-            </header>
-            <div className="sum-panel-body">
-              <p>{term.definition}</p>
-              <p className="mono">{term.iri}</p>
-            </div>
-          </article>
-        ) : null}
-        {schema ? (
-          <article className="sum-panel">
-            <header className="sum-panel-head"><h2>{schema.name}</h2></header>
-            <div className="sum-panel-body mono">{schema.location}</div>
-          </article>
-        ) : null}
-        {tracing ? (
-          <article className="sum-panel">
-            <header className="sum-panel-head">
-              <h2>{tracing.project}</h2>
-              <select aria-label="Window" value={windowId} onChange={(event) => setWindowId(event.target.value)}>
-                {WINDOWS.map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </header>
-            <div className="sum-panel-body">
-              <p>{tracing.traces} traces · {tracing.sessions} sessions · {tracing.tokens} tokens · {tracing.grounded} grounded</p>
-              <p className="muted">{tracing.augmented} augmented</p>
-              <p>Genera {tracing.genera.map((item) => `${item.code} ${item.count}`).join(" · ") || "—"}</p>
-              <p>Leaves {tracing.top_iris.map((item) => item.iri.split("#")[1]).join(" · ") || "—"}</p>
-              {tracing.latency_ms != null ? <p>Latency {tracing.latency_ms} ms</p> : null}
-              {tracing.total_cost != null ? <p>Cost {tracing.total_cost}</p> : null}
-              {tracing.errors != null ? <p>Errors {tracing.errors}</p> : null}
-            </div>
-          </article>
-        ) : null}
-        {view.sessions.map((session) => (
-          <article className="sum-panel" key={session.id}>
-            <header className="sum-panel-head">
-              <h2>{session.id}</h2>
-              <span className="muted">{session.traces} traces</span>
-            </header>
-            <div className="sum-panel-body">
-              {session.items.map((item, index) => (
-                <div key={`${item.generated_at}-${index}`}>
-                  <p className="muted">
-                    generated {formatStamp(item.generated_at)}
-                    {item.augmented_at ? ` · augmented ${formatStamp(item.augmented_at)}` : ""}
-                  </p>
-                  {item.rich.some((part) => part.iri) ? <RichSentence parts={item.rich} /> : <p>{item.output}</p>}
-                </div>
-              ))}
-            </div>
-          </article>
-        ))}
+      <section className="sum-trail" aria-label="Lineup" ref={trailRef}>
+        <TrailPanels
+          trail={trail}
+          view={view}
+          byIri={byIri}
+          byCode={byCode}
+          byTable={byTable}
+          windowId={windowId}
+          loading={loading}
+          onWindow={setWindowId}
+          onOpen={openFrom}
+          onClose={(index) => setTrail((current) => (current.length > 1 ? current.slice(0, Math.max(1, index)) : current))}
+        />
       </section>
     </div>
   );
