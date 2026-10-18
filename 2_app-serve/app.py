@@ -12,6 +12,7 @@ import html
 import json
 import os
 import sys
+import time
 import urllib.parse
 import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -810,7 +811,25 @@ def response_for(
     if parsed.path == "/api/optagent/v1/sessions_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary":
-        return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "summary_origin", _summary_origin)).encode(), extra
+        from optagent.lineup import build_lineup
+        from optagent.snapshot_store import state_dir
+
+        document = _cached_json(runtime, "summary_origin", _summary_origin)
+        query = urllib.parse.parse_qs(parsed.query)
+        window = (query.get("window") or ["365d"])[0]
+        project = (query.get("project") or [""])[0]
+        archive_root = state_dir() / "archive"
+        archived = sorted(path.name for path in archive_root.iterdir()) if archive_root.is_dir() else []
+        live = bool(os.environ.get("OPTAGENT_TRACE_STREAM", "").strip()) and not os.environ.get("CDSW_APP_PORT")
+        document["lineup"] = build_lineup(
+            _loaded_spans(runtime),
+            now_ms=int(time.time() * 1000),
+            window=window,
+            archive=archived,
+            live=live,
+            project=project,
+        )
+        return 200, "application/json; charset=utf-8", json.dumps(document).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions":
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", _sessions_origin)).encode(), extra
     if parsed.path == "/api/optagent/v1/activity":

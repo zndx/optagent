@@ -89,7 +89,20 @@ def install_archive(blob: bytes) -> dict:
                 raise ValueError(f"spans member {member.metadata_location} is missing")
         dest = store_root()
         if dest.exists():
-            shutil.rmtree(dest)
+            previous = dest / "signals-snapshot.json"
+            if previous.is_file():
+                try:
+                    old = json.loads(previous.read_text(encoding="utf-8"))
+                    old_id = str(old.get("snapshot-id") or "previous")
+                except json.JSONDecodeError:
+                    old_id = "previous"
+                archive = dest.parent / "archive" / old_id
+                if archive.exists():
+                    shutil.rmtree(archive)
+                archive.parent.mkdir(parents=True, exist_ok=True)
+                dest.rename(archive)
+            else:
+                shutil.rmtree(dest)
         staging.rename(dest)
     except Exception:
         if staging.exists():

@@ -22,7 +22,47 @@ type Brand = {
 
 type Panel = { id: string; title: string; project: string; kind: string; body: string };
 type SummaryGroup = { id: string; title: string; items: string[] };
-type SummaryDoc = { groups?: SummaryGroup[]; panels?: Panel[]; foot?: string; "snapshot-id"?: string };
+type LineupRoot = { id: string; title: string; live?: boolean; entries?: string[] };
+type LineupConcept = { iri: string; code: string; label: string; definition: string };
+type LineupTable = { name: string; location: string };
+type TracingProject = {
+  project: string;
+  traces: number;
+  sessions: number;
+  tokens: number;
+  grounded: number;
+  augmented: number;
+  series: { day: string; traces: number }[];
+  genera: { code: string; count: number }[];
+  top_iris: { iri: string; count: number }[];
+  latency_ms: number | null;
+  total_cost: number | null;
+  errors: number | null;
+};
+type LineupSessionItem = {
+  name: string;
+  output: string;
+  rich: { text: string; iri?: string; label?: string }[];
+  generated_at: number;
+  augmented_at: number | null;
+};
+type LineupDoc = {
+  pin: string;
+  release_installed: boolean;
+  roots: LineupRoot[];
+  lexicon: LineupConcept[];
+  schema: LineupTable[];
+  tracing: { window: string; projects: TracingProject[] };
+  sessions: { id: string; traces: number; items: LineupSessionItem[] }[];
+  published: string[];
+};
+type SummaryDoc = {
+  groups?: SummaryGroup[];
+  panels?: Panel[];
+  foot?: string;
+  "snapshot-id"?: string;
+  lineup?: LineupDoc;
+};
 
 type AgentProfile = {
   name: string;
@@ -1261,6 +1301,177 @@ function Sessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => void 
   );
 }
 
+function LineupSummary({ lineup }: { lineup: LineupDoc }) {
+  const [root, setRoot] = useState("current");
+  const [windowId, setWindowId] = useState(lineup.tracing.window || "365d");
+  const [project, setProject] = useState("");
+  const [concept, setConcept] = useState("");
+  const [table, setTable] = useState("");
+  const [view, setView] = useState<LineupDoc>(lineup);
+  useEffect(() => {
+    const params = new URLSearchParams({ window: windowId });
+    if (project) params.set("project", project);
+    fetch(`/api/optagent/v1/summary?${params.toString()}`)
+      .then((response) => response.json())
+      .then((data: SummaryDoc) => {
+        if (data.lineup) setView(data.lineup);
+      })
+      .catch(() => undefined);
+  }, [windowId, project]);
+  const tracing = view.tracing.projects.find((item) => item.project === project);
+  const term = view.lexicon.find((item) => item.iri === concept);
+  const schema = view.schema.find((item) => item.name === table);
+  return (
+    <div className="sum-page">
+      <aside className="sum-rail" aria-label="Summary lineup">
+        <div className="sum-group">
+          <div className="sum-group-title">ROOTS</div>
+          {view.roots.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={root === item.id ? "sum-tab active" : "sum-tab"}
+              onClick={() => setRoot(item.id)}
+            >
+              {item.title}
+            </button>
+          ))}
+        </div>
+        <div className="sum-group">
+          <div className="sum-group-title">LEXICON</div>
+          {view.lexicon.slice(0, 12).map((item) => (
+            <button
+              key={item.iri}
+              type="button"
+              className={concept === item.iri ? "sum-tab active" : "sum-tab"}
+              onClick={() => {
+                setConcept(item.iri);
+                setRoot("current");
+              }}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="sum-group">
+          <div className="sum-group-title">SCHEMA</div>
+          {view.schema.slice(0, 12).map((item) => (
+            <button
+              key={item.name}
+              type="button"
+              className={table === item.name ? "sum-tab active" : "sum-tab"}
+              onClick={() => {
+                setTable(item.name);
+                setRoot("current");
+              }}
+            >
+              {item.name}
+            </button>
+          ))}
+        </div>
+        <div className="sum-group">
+          <div className="sum-group-title">TRACING</div>
+          {view.tracing.projects.map((item) => (
+            <button
+              key={item.project}
+              type="button"
+              className={project === item.project ? "sum-tab active" : "sum-tab"}
+              onClick={() => setProject(item.project)}
+            >
+              {item.project}
+            </button>
+          ))}
+        </div>
+        <div className="sum-rail-foot muted">pin {view.pin.slice(0, 12)}</div>
+      </aside>
+      <section className="sum-trail" aria-label="Lineup">
+        {root === "scratch" ? (
+          <article className="sum-panel">
+            <header className="sum-panel-head"><h2>SCRATCH</h2></header>
+            <div className="sum-panel-body">
+              {view.roots.find((item) => item.id === "scratch")?.live
+                ? "Live trace analysis is connected."
+                : "This deployment reads snapshots. Live trace analysis is not connected."}
+            </div>
+          </article>
+        ) : null}
+        {root === "archive" ? (
+          <article className="sum-panel">
+            <header className="sum-panel-head"><h2>ARCHIVE</h2></header>
+            <div className="sum-panel-body">
+              {(view.roots.find((item) => item.id === "archive")?.entries || []).join("\n") || "No frozen snapshots yet."}
+            </div>
+          </article>
+        ) : null}
+        {root === "current" && !view.release_installed ? (
+          <article className="sum-panel">
+            <header className="sum-panel-head"><h2>CURRENT</h2></header>
+            <div className="sum-panel-body">The published SDG release is not installed on this host.</div>
+          </article>
+        ) : null}
+        {term ? (
+          <article className="sum-panel">
+            <header className="sum-panel-head">
+              <h2>{term.label}</h2>
+              <span className="muted sum-panel-meta">{term.code}</span>
+            </header>
+            <div className="sum-panel-body">
+              <p>{term.definition}</p>
+              <p className="mono">{term.iri}</p>
+            </div>
+          </article>
+        ) : null}
+        {schema ? (
+          <article className="sum-panel">
+            <header className="sum-panel-head"><h2>{schema.name}</h2></header>
+            <div className="sum-panel-body mono">{schema.location}</div>
+          </article>
+        ) : null}
+        {tracing ? (
+          <article className="sum-panel">
+            <header className="sum-panel-head">
+              <h2>{tracing.project}</h2>
+              <select aria-label="Window" value={windowId} onChange={(event) => setWindowId(event.target.value)}>
+                {WINDOWS.map(([value, label]) => (
+                  <option key={value} value={value}>{label}</option>
+                ))}
+              </select>
+            </header>
+            <div className="sum-panel-body">
+              <p>{tracing.traces} traces · {tracing.sessions} sessions · {tracing.tokens} tokens · {tracing.grounded} grounded</p>
+              <p className="muted">{tracing.augmented} augmented</p>
+              <p>Genera {tracing.genera.map((item) => `${item.code} ${item.count}`).join(" · ") || "—"}</p>
+              <p>Leaves {tracing.top_iris.map((item) => item.iri.split("#")[1]).join(" · ") || "—"}</p>
+              {tracing.latency_ms != null ? <p>Latency {tracing.latency_ms} ms</p> : null}
+              {tracing.total_cost != null ? <p>Cost {tracing.total_cost}</p> : null}
+              {tracing.errors != null ? <p>Errors {tracing.errors}</p> : null}
+            </div>
+          </article>
+        ) : null}
+        {view.sessions.map((session) => (
+          <article className="sum-panel" key={session.id}>
+            <header className="sum-panel-head">
+              <h2>{session.id}</h2>
+              <span className="muted">{session.traces} traces</span>
+            </header>
+            <div className="sum-panel-body">
+              {session.items.map((item, index) => (
+                <div key={`${item.generated_at}-${index}`}>
+                  <p className="muted">
+                    generated {formatStamp(item.generated_at)}
+                    {item.augmented_at ? ` · augmented ${formatStamp(item.augmented_at)}` : ""}
+                  </p>
+                  {item.rich.some((part) => part.iri) ? <RichSentence parts={item.rich} /> : <p>{item.output}</p>}
+                </div>
+              ))}
+            </div>
+          </article>
+        ))}
+      </section>
+    </div>
+  );
+}
+
 function Summary({
   summary,
   section,
@@ -1274,6 +1485,9 @@ function Summary({
   onSection: (id: string) => void;
   onLens: (id: string) => void;
 }) {
+  if (summary.lineup) {
+    return <LineupSummary lineup={summary.lineup} />;
+  }
   const groups = summary.groups ?? [];
   const panels = (summary.panels ?? []).filter((panel) => {
     if (section !== "all" && panel.project !== section) return false;

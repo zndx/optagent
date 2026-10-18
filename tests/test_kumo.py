@@ -33,6 +33,9 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert 'aria-label="Tenant"' in source
     assert 'aria-label="signals-snapshot archive"' in source
     assert "sum-rail" in source
+    for title in ("CURRENT", "SCRATCH", "ARCHIVE", "LEXICON", "SCHEMA", "TRACING"):
+        assert title in source
+    assert "Training" not in source
     assert "sum-panel" in source
     assert 'id="terminal"' in source
     assert "Ghostty not connected" in source
