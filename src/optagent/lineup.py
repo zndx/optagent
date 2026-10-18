@@ -34,6 +34,7 @@ _CONCEPT = re.compile(
 )
 _NOTE = re.compile(r'skos:notation\s+"([^"]+)"')
 _LABEL = re.compile(r'skos:prefLabel\s+"([^"]+)"')
+_ALT = re.compile(r'skos:altLabel\s+"([^"]+)"')
 _DEFN = re.compile(r'skos:definition\s+"([^"]+)"')
 _TABLE = re.compile(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?([A-Za-z0-9_\.]+)", re.I)
 _BROADER = re.compile(r"skos:broader\s+<(https://signals\.zndx\.org/sdg#[^>]+)>")
@@ -100,10 +101,15 @@ def load_lexicon(root: Path | None) -> list[dict]:
             for parent in _BROADER.findall(body):
                 if parent not in broader:
                     broader.append(parent)
+            alts: list[str] = []
+            for alt in _ALT.findall(body):
+                if alt not in alts:
+                    alts.append(alt)
             concepts[iri] = {
                 "iri": iri,
                 "code": (_NOTE.search(body).group(1) if _NOTE.search(body) else ""),
                 "label": (_LABEL.search(body).group(1) if _LABEL.search(body) else iri.rsplit("#", 1)[-1]),
+                "alt": alts,
                 "definition": (_DEFN.search(body).group(1) if _DEFN.search(body) else ""),
                 "broader": broader,
             }
@@ -316,6 +322,7 @@ def _fresh() -> dict:
         "cost": [],
         "errors": 0,
         "error_known": False,
+        "overwatch": 0,
         "leaves": {},
         "undomain": 0,
         "domains": {},
@@ -349,6 +356,8 @@ def _observe(bucket: dict, span: dict, *, nest: bool) -> None:
         bucket["error_known"] = True
         if attributes.get("error"):
             bucket["errors"] += 1
+    if attributes.get("overwatch.reason"):
+        bucket["overwatch"] += 1
     if not nest:
         return
     code = str(attributes.get("aegir.genus_code") or "")
@@ -374,6 +383,7 @@ def _publish(bucket: dict, *, nest: bool) -> dict:
         "latency_ms": round(sum(bucket["latency"]) / len(bucket["latency"]), 3) if bucket["latency"] else None,
         "total_cost": round(sum(bucket["cost"]), 6) if bucket["cost"] else None,
         "errors": bucket["errors"] if bucket["error_known"] else None,
+        "overwatch": bucket["overwatch"],
         "top_iris": [
             {"iri": iri, "count": leaves[iri]}
             for iri in sorted(leaves, key=lambda item: (-leaves[item], item))[:8]
@@ -463,6 +473,7 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
         cost = []
         errors = 0
         error_known = False
+        overwatch = 0
         augmented = 0
         for span in rows:
             attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
@@ -494,6 +505,8 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
                 error_known = True
                 if attributes.get("error"):
                     errors += 1
+            if attributes.get("overwatch.reason"):
+                overwatch += 1
         projects.append(
             {
                 "project": name,
@@ -508,6 +521,7 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
                 "latency_ms": round(sum(latency) / len(latency), 3) if latency else None,
                 "total_cost": round(sum(cost), 6) if cost else None,
                 "errors": errors if error_known else None,
+                "overwatch": overwatch,
             }
         )
     return {"window": window, "projects": projects}
@@ -540,15 +554,20 @@ def session_items(spans: list[dict], project: str) -> list[dict]:
                 ),
                 "generated_at": _generated_ms(span),
                 "augmented_at": _augmented_ms(span),
+                "genus_iri": str(attributes.get("aegir.genus_iri") or ""),
+                "genus_label": str(attributes.get("aegir.genus_label") or ""),
+                "genus_code": str(attributes.get("aegir.genus_code") or ""),
+                "overwatch": str(attributes.get("overwatch.reason") or ""),
             }
         )
     items = []
     for sid in sorted(grouped):
         rows = grouped[sid]
         linked = [row for row in rows if any(part.get("iri") for part in row["rich"])]
-        others = [row for row in rows if not any(part.get("iri") for part in row["rich"])]
+        review = [row for row in rows if row.get("overwatch") and row not in linked]
+        others = [row for row in rows if row not in linked and row not in review]
         others.sort(key=lambda item: item["generated_at"], reverse=True)
-        shown = (linked + others)[:40]
+        shown = (linked + review + others)[:40]
         shown.sort(key=lambda item: item["generated_at"])
         items.append({"id": sid, "traces": len(rows), "items": shown})
     return items

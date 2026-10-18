@@ -45,6 +45,7 @@ type TracingProject = {
   latency_ms: number | null;
   total_cost: number | null;
   errors: number | null;
+  overwatch?: number;
 };
 type LineupSessionItem = {
   name: string;
@@ -52,6 +53,10 @@ type LineupSessionItem = {
   rich: { text: string; iri?: string; label?: string }[];
   generated_at: number;
   augmented_at: number | null;
+  genus_iri?: string;
+  genus_label?: string;
+  genus_code?: string;
+  overwatch?: string;
 };
 type TraceStats = {
   traces: number;
@@ -62,6 +67,7 @@ type TraceStats = {
   latency_ms: number | null;
   total_cost: number | null;
   errors: number | null;
+  overwatch?: number;
   top_iris?: { iri: string; count: number }[];
   top_sessions?: { id: string; project: string; traces: number }[];
   undomain?: number;
@@ -1646,7 +1652,23 @@ function statRows(row: TraceStats): [string, string][] {
   if (row.total_cost != null) rows.push(["cost", String(row.total_cost)]);
   if (row.errors != null) rows.push(["errors", String(row.errors)]);
   if (row.undomain) rows.push(["no topic domain", String(row.undomain)]);
+  if (row.overwatch) rows.push(["overwatch", String(row.overwatch)]);
   return rows;
+}
+
+function PassageFacts({ item, onOpen }: { item: LineupSessionItem; onOpen: (token: string) => void }) {
+  const rows: [string, ReactNode][] = [];
+  if (item.genus_iri) {
+    rows.push([
+      "genus",
+      <Follow token={item.genus_iri} label={item.genus_label || iriFragment(item.genus_iri)} onOpen={onOpen} />,
+    ]);
+  } else if (item.genus_label) {
+    rows.push(["genus", item.genus_label]);
+  }
+  if (item.overwatch) rows.push(["overwatch", item.overwatch]);
+  if (!rows.length) return null;
+  return <PropTable rows={rows} />;
 }
 
 function PropTable({ rows }: { rows: [string, ReactNode][] }) {
@@ -2118,6 +2140,7 @@ function TrailPanels({
                         ...(tracing.latency_ms != null ? [["latency", `${tracing.latency_ms} ms`] as [string, string]] : []),
                         ...(tracing.total_cost != null ? [["cost", String(tracing.total_cost)] as [string, string]] : []),
                         ...(tracing.errors != null ? [["errors", String(tracing.errors)] as [string, string]] : []),
+                        ...(tracing.overwatch ? [["overwatch", String(tracing.overwatch)] as [string, string]] : []),
                       ]}
                     />
                     <p className="sum-section">Domains.</p>
@@ -2176,7 +2199,10 @@ function TrailPanels({
         if (stop.kind === "segment") {
           const session = view.sessions.find((item) => item.id === stop.session);
           const term = [...byIri.values()].find((item) => iriFragment(item.iri) === stop.fragment);
-          const matches = (session?.items || []).filter((item) => item.rich.some((part) => iriFragment(part.iri || "") === stop.fragment));
+          const matches = (session?.items || []).filter((item) =>
+            iriFragment(item.genus_iri || "") === stop.fragment ||
+            item.rich.some((part) => iriFragment(part.iri || "") === stop.fragment),
+          );
           const permalink = trailToPath([
             { kind: "timeline" },
             { kind: "tracing", project: stop.project },
@@ -2194,6 +2220,7 @@ function TrailPanels({
                 {matches.length ? matches.map((item, itemIndex) => (
                   <div key={`${item.generated_at}-${itemIndex}`}>
                     <p className="muted">generated {formatStamp(item.generated_at)}</p>
+                    <PassageFacts item={item} onOpen={(token) => onOpen(index, token)} />
                     <RichSentence
                       parts={item.rich}
                       hrefFor={(iri) => `/summary/term/${iriFragment(iri)}`}
@@ -2228,6 +2255,7 @@ function TrailPanels({
                     generated {formatStamp(item.generated_at)}
                     {item.augmented_at ? ` · augmented ${formatStamp(item.augmented_at)}` : ""}
                   </p>
+                  <PassageFacts item={item} onOpen={(token) => onOpen(index, token)} />
                   {item.rich.some((part) => part.iri) ? (
                     <RichSentence
                       parts={item.rich}

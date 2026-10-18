@@ -6,7 +6,7 @@ The procedure covers every span in the archive. A run passes ``since`` and
 ``until``; an empty ``since`` is the whole snapshot. Airflow backfill walks
 those bounds one day at a time. This module does not call TypeSafe and does
 not invent a leaf IRI. An admitted window records the genus the local
-aperture returned.
+aperture returned. Short term links are a later classification stage.
 """
 
 from __future__ import annotations
@@ -58,52 +58,6 @@ def readable_segment(text: str) -> bool:
     return len(words) >= 8
 
 
-def link_admissions(span: dict, scan: dict, text: str, *, published: set[str] | None = None) -> bool:
-    """Copy admitted windows onto the same string the aperture scored.
-
-    The IRI is the concept the aperture returned. A hit without that IRI
-    does not become a link.
-    """
-
-    attributes = span.setdefault("attributes", {})
-    if attributes.get("sdg.spans"):
-        return False
-    links = []
-    for item in (scan or {}).get("items") or []:
-        if not item.get("admitted"):
-            continue
-        iri = str(item.get("iri") or "").strip()
-        if not iri.startswith(SDG_IRI):
-            continue
-        if published is not None and iri not in published:
-            continue
-        start, end = _window(item)
-        if end <= start or start < 0 or end > len(text):
-            continue
-        excerpt = text[start:end]
-        if not readable_segment(excerpt):
-            continue
-        links.append(
-            {
-                "start": start,
-                "end": end,
-                "text": text[start:end],
-                "iri": iri,
-                "label": str(item.get("label") or ""),
-            }
-        )
-    if not links:
-        return False
-    attributes["sdg.spans"] = links
-    best = max(
-        (item for item in (scan or {}).get("items") or [] if item.get("admitted") and str(item.get("iri") or "").startswith(SDG_IRI)),
-        key=lambda item: float(item.get("genus_margin") or 0),
-    )
-    if not attributes.get("aegir.genus_iri"):
-        attributes["aegir.genus_iri"] = str(best.get("iri") or "")
-    return True
-
-
 def apply_admission(
     span: dict,
     scan: dict,
@@ -115,9 +69,12 @@ def apply_admission(
 ) -> bool:
     """Stamp the highest-margin admitted genus. Return whether a genus was recorded.
 
-    A declined or root-only scan leaves the span unchanged. The link uses the
-    aperture's concept IRI and the character window it scored.
+    A declined or root-only scan leaves the span unchanged. The genus IRI is
+    the concept the aperture returned. This stage does not underline the window.
+    ``text`` and ``published`` are accepted so earlier callers keep working.
     """
+
+    del text, published
 
     items = [item for item in (scan or {}).get("items") or [] if item.get("admitted") and item.get("code")]
     if not items:
@@ -147,8 +104,10 @@ def apply_admission(
             }
             for item in items
         ]
-    linked = link_admissions(span, scan, text, published=published) if text else False
-    return fresh or linked
+        iri = str(chosen.get("iri") or "").strip()
+        if iri.startswith(SDG_IRI):
+            attributes["aegir.genus_iri"] = iri
+    return fresh
 
 
 def span_text(span: dict) -> str:
@@ -170,8 +129,6 @@ def backfill_tree(
     admit,
     augmented_at_ms: int,
     minimum_chars: int = 40,
-    links_only: bool = False,
-    published: set[str] | None = None,
 ) -> dict:
     """Admit genera on spans inside ``[since_ms, until_ms]``. Other spans stay as harvested."""
 
@@ -192,15 +149,10 @@ def backfill_tree(
             if stamp < since_ms or stamp > until_ms:
                 continue
             attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
-            if attributes.get("sdg.spans"):
-                continue
-            already = bool(attributes.get("aegir.genus_code"))
-            if links_only and not already:
+            if attributes.get("aegir.genus_code") or attributes.get("sdg.spans"):
                 continue
             text = span_text(span)
-            if not already and len(text.strip()) < minimum_chars:
-                continue
-            if not text:
+            if len(text.strip()) < minimum_chars:
                 continue
             examined += 1
             if examined == 1 or examined % 25 == 0:
@@ -210,7 +162,7 @@ def backfill_tree(
             except Exception:
                 errors += 1
                 continue
-            if apply_admission(span, scan, augmented_at_ms=augmented_at_ms, text=text, published=published):
+            if apply_admission(span, scan, augmented_at_ms=augmented_at_ms, text=text):
                 admitted += 1
                 changed = True
         if changed:
@@ -242,24 +194,19 @@ def aperture_admit(text: str) -> dict:
     return item_scan(text, tau=TAU)
 
 
-def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = False, links_only: bool = False) -> dict:
+def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = False) -> dict:
     """Backfill one snapshot directory. Empty ``since`` covers every span in it."""
 
     root = Path(snapshot)
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     since_ms = None if not (since or "").strip() else parse_time(since, default_ms=0)
     until_ms = None if not (until or "").strip() else parse_time(until, default_ms=now_ms)
-    from optagent.lineup import corpora_root, load_lexicon
-
-    published = {item["iri"] for item in load_lexicon(corpora_root())} or None
     result = backfill_tree(
         root,
         since_ms=since_ms,
         until_ms=until_ms,
         admit=aperture_admit,
         augmented_at_ms=now_ms,
-        links_only=links_only,
-        published=published,
     )
     if install:
         from optagent.snapshot_store import install_archive

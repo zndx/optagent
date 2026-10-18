@@ -371,12 +371,19 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
         "gaius.hx.summary_type",
         "sdg.iri",
         "sdg.spans",
+        "overwatch.reason",
+        "typesafe.model",
+        "typesafe.input_tokens",
+        "typesafe.output_tokens",
     )
     for span in spans:
         if str(span.get("trace_id") or "") != trace_id:
             continue
         project, sid, activity, attributes = _span_identity(span)
         small = {key: attributes[key] for key in small_keys if attributes.get(key) not in (None, "")}
+        output = attributes.get("output.value") or ""
+        incoming = attributes.get("input.value") or ""
+        body = output if str(output).strip() else incoming
         return {
             "trace_id": trace_id,
             "name": span.get("name") or "",
@@ -385,10 +392,10 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
             "session": sid,
             "activity": activity,
             "span_kind": str(attributes.get("openinference.span.kind") or ""),
-            "input": attributes.get("input.value") or "",
-            "output": attributes.get("output.value") or "",
+            "input": incoming,
+            "output": output,
             "rich": rich_segments(
-                str(attributes.get("output.value") or ""),
+                str(body),
                 attributes.get("sdg.spans") if isinstance(attributes.get("sdg.spans"), list) else [],
             ),
             "attributes": small,

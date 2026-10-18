@@ -5,6 +5,8 @@
 Each scheduled run covers that day's interval, so a backfill of the DAG
 walks the full snapshot one UTC day at a time. A manual run can pass
 ``since`` and ``until`` in the DAG config to cover an explicit range instead.
+``classify`` in the config turns on the TypeSafe short-span stage. A
+scheduled run leaves that stage off.
 Signals owns the Airflow scheduler. This file is the DAG to copy onto it.
 
   airflow dags backfill optagent_agent_trace_backfill \\
@@ -37,7 +39,12 @@ def _run(**context):
         end = context.get("data_interval_end")
         since = window.isoformat() if window is not None else ""
         until = end.isoformat() if end is not None else ""
-    return run(Path(snapshot), since=since, until=until)
+    result = run(Path(snapshot), since=since, until=until)
+    if str(conf.get("classify") or "").lower() in {"1", "true", "yes"}:
+        from optagent.classify import classify_snapshot
+
+        result["classify"] = classify_snapshot(Path(snapshot), since=since, until=until)
+    return result
 
 
 with DAG(

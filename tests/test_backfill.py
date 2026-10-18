@@ -103,15 +103,7 @@ def test_admission_records_genus_without_inventing_an_iri() -> None:
     assert attributes["aegir.genus_iri"] == "https://signals.zndx.org/sdg#LIMS"
     assert attributes["aegir.tau"] == 0.10
     assert attributes["sdg.augmented_at"] == 1_700_000_100_000
-    assert attributes["sdg.spans"] == [
-        {
-            "start": 0,
-            "end": len(text),
-            "text": text,
-            "iri": "https://signals.zndx.org/sdg#LIMS",
-            "label": "LIMS",
-        }
-    ]
+    assert "sdg.spans" not in attributes
     dumped = make_span(
         project="hermes",
         session="hermes:agent-rtc:1",
