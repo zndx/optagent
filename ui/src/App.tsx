@@ -48,6 +48,8 @@ type LineupSessionItem = {
 };
 type LineupDoc = {
   pin: string;
+  checkout?: string;
+  pin_matches?: boolean;
   release_installed: boolean;
   roots: LineupRoot[];
   lexicon: LineupConcept[];
@@ -1382,7 +1384,11 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
             </button>
           ))}
         </div>
-        <div className="sum-rail-foot muted">pin {view.pin.slice(0, 12)}</div>
+        <div className="sum-rail-foot muted">
+          pin {view.pin.slice(0, 12)}
+          {view.checkout ? ` · checkout ${view.checkout.slice(0, 12)}` : ""}
+          {view.pin_matches === false ? " · pin differs" : ""}
+        </div>
       </aside>
       <section className="sum-trail" aria-label="Lineup">
         {root === "scratch" ? (

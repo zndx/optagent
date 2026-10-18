@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import re
+import subprocess
 from pathlib import Path
 
 from optagent.phoenix_spans import rich_segments
@@ -32,6 +33,19 @@ _LABEL = re.compile(r'skos:prefLabel\s+"([^"]+)"')
 _DEFN = re.compile(r'skos:definition\s+"([^"]+)"')
 _TABLE = re.compile(r"CREATE TABLE\s+(?:IF NOT EXISTS\s+)?([A-Za-z0-9_\.]+)", re.I)
 _WORD = re.compile(r"\S+")
+
+
+def checkout_sha(root: Path | None) -> str:
+    if root is None:
+        return ""
+    try:
+        return subprocess.check_output(
+            ["git", "-C", str(root), "rev-parse", "HEAD"],
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return ""
 
 
 def corpora_root() -> Path | None:
@@ -234,8 +248,11 @@ def build_lineup(
     root = corpora_root()
     lexicon = load_lexicon(root)
     published = {item["iri"] for item in lexicon}
+    checkout = checkout_sha(root)
     return {
         "pin": SDG_PIN,
+        "checkout": checkout,
+        "pin_matches": bool(checkout) and checkout == SDG_PIN,
         "release_installed": root is not None and bool(lexicon or load_schema(root)),
         "roots": [
             {"id": "current", "title": "CURRENT"},
