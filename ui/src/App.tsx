@@ -68,7 +68,8 @@ type TraceDetail = {
   span_kind: string;
   input: string;
   output: string;
-  attributes: Record<string, string | number>;
+  rich?: { text: string; iri?: string; label?: string }[];
+  attributes: Record<string, string | number | unknown>;
 };
 
 type SessionsDoc = {
@@ -789,6 +790,22 @@ const SESSION_CATEGORIES = [
   ["all", "All"],
 ] as const;
 
+function RichSentence({ parts }: { parts: { text: string; iri?: string; label?: string }[] }) {
+  return (
+    <div className="rich-body">
+      {parts.map((part, index) =>
+        part.iri ? (
+          <a key={index} href={part.iri} title={part.label || part.iri}>
+            {part.text}
+          </a>
+        ) : (
+          <span key={index}>{part.text}</span>
+        ),
+      )}
+    </div>
+  );
+}
+
 function formatStamp(ms: number): string {
   if (!ms) return "";
   return new Date(ms).toISOString().slice(0, 16).replace("T", " ");
@@ -1006,7 +1023,11 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
               <h3>Input</h3>
               <div className="rich-body">{detail?.input || "—"}</div>
               <h3>Output</h3>
-              <div className="rich-body">{detail?.output || "—"}</div>
+              {detail?.rich && detail.rich.some((part) => part.iri) ? (
+                <RichSentence parts={detail.rich} />
+              ) : (
+                <div className="rich-body">{detail?.output || "—"}</div>
+              )}
             </div>
           </article>
         </div>

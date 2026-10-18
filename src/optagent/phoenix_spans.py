@@ -309,6 +309,41 @@ def session_traces(spans: list[dict], session_id: str) -> dict | None:
     return {"id": session_id, "traces": traces}
 
 
+def rich_segments(text: str, spans: list | None) -> list[dict]:
+    """Split ``text`` on copied character offsets. Each grounded slice keeps its IRI.
+
+    Offsets are into this string. They are not recomputed. A span with no IRI
+    stays ordinary text. Overlaps yield to the earlier span.
+    """
+
+    body = text or ""
+    chosen: list[tuple[int, int, str, str]] = []
+    for span in spans or []:
+        if not isinstance(span, dict):
+            continue
+        iri = str(span.get("iri") or span.get("sdg.iri") or "").strip()
+        if not iri.startswith("https://signals.zndx.org/sdg#"):
+            continue
+        start = int(span.get("start") or 0)
+        end = int(span.get("end") or 0)
+        if end <= start or start < 0 or end > len(body):
+            continue
+        chosen.append((start, end, iri, str(span.get("label") or "")))
+    chosen.sort(key=lambda item: (item[0], -(item[1] - item[0])))
+    parts: list[dict] = []
+    cursor = 0
+    for start, end, iri, label in chosen:
+        if start < cursor:
+            continue
+        if start > cursor:
+            parts.append({"text": body[cursor:start]})
+        parts.append({"text": body[start:end], "iri": iri, "label": label})
+        cursor = end
+    if cursor < len(body):
+        parts.append({"text": body[cursor:]})
+    return parts
+
+
 def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
     """One trace body. The explorer asks for this after a row is chosen."""
 
@@ -348,6 +383,10 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
             "span_kind": str(attributes.get("openinference.span.kind") or ""),
             "input": attributes.get("input.value") or "",
             "output": attributes.get("output.value") or "",
+            "rich": rich_segments(
+                str(attributes.get("output.value") or ""),
+                attributes.get("sdg.spans") if isinstance(attributes.get("sdg.spans"), list) else [],
+            ),
             "attributes": small,
         }
     return None

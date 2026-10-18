@@ -11,6 +11,7 @@ import pytest
 from optagent.phoenix_spans import (
     activity_points,
     make_span,
+    rich_segments,
     session_catalog,
     session_id,
     session_traces,
@@ -83,6 +84,34 @@ def test_one_thought_is_one_trace_and_the_project_is_on_the_resource() -> None:
     later = trace_detail([span, other], other["trace_id"])
     assert later is not None
     assert later["t"] == 2_000_000_000
+
+
+def test_rich_text_keeps_the_sentence_and_links_the_copied_offsets() -> None:
+    sentence = "The specimen is accessioned. The assay is run on a named instrument."
+    parts = rich_segments(
+        sentence,
+        [
+            {
+                "start": 0,
+                "end": 28,
+                "text": "The specimen is accessioned.",
+                "iri": "https://signals.zndx.org/sdg#LIMS_SPECIMEN_LIFECYCLE",
+                "label": "Specimen Lifecycle Management",
+            },
+            {
+                "start": 29,
+                "end": len(sentence),
+                "iri": "https://signals.zndx.org/sdg#LIMS_ASSAY_EXECUTION",
+                "label": "Assay Execution",
+            },
+            {"start": 0, "end": 3, "iri": "https://evil.example/phish"},
+        ],
+    )
+    assert "".join(part["text"] for part in parts) == sentence
+    assert parts[0]["iri"].endswith("LIMS_SPECIMEN_LIFECYCLE")
+    assert parts[1]["text"] == " "
+    assert parts[2]["iri"].endswith("LIMS_ASSAY_EXECUTION")
+    assert all(not part.get("iri", "").startswith("https://evil.example") for part in parts)
 
 
 def test_activity_points_keep_time_and_drop_trace_bodies() -> None:

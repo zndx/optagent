@@ -223,6 +223,11 @@
   font-size: 0.68rem;
 }
 .rich-body { white-space: pre-wrap; line-height: 1.5; }
+.rich-body a {
+  color: var(--color-kumo-brand);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
 .term-full {
   position: relative;
   flex: 1;
