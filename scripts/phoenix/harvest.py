@@ -205,6 +205,37 @@ def metabase_spans(database_url: str) -> tuple[list[dict], dict]:
     return spans, watermark
 
 
+def _stamp_sdg(attributes: dict, raw: str | None) -> None:
+    """Copy aperture links. Confidence is kept only when a child IRI came back."""
+
+    if not raw:
+        return
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError:
+        return
+    links = loaded.get("links") if isinstance(loaded, dict) else None
+    if not isinstance(links, list) or not links:
+        return
+    link = next((item for item in links if isinstance(item, dict) and item.get("genus_iri")), None)
+    if link is None:
+        return
+    attributes["aegir.genus_iri"] = str(link.get("genus_iri") or "")
+    attributes["aegir.genus_code"] = str(link.get("genus_code") or "")
+    attributes["aegir.start"] = int(link.get("start") or 0)
+    attributes["aegir.end"] = int(link.get("end") or 0)
+    if link.get("rel_margin_h") is not None:
+        attributes["aegir.rel_margin_h"] = link.get("rel_margin_h")
+    if link.get("tau") is not None:
+        attributes["aegir.tau"] = link.get("tau")
+    child = str(link.get("sdg.iri") or "")
+    if child:
+        prior = str(attributes.get("semantica.entities") or "")
+        attributes["semantica.entities"] = ",".join(part for part in (prior, child) if part)
+        if link.get("semantica.confidence") is not None:
+            attributes["semantica.confidence"] = link.get("semantica.confidence")
+
+
 def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
     """Local Hermes SessionDB. AgentRTC turns and the other Hermes sources.
 
@@ -240,7 +271,7 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
             model = str(session["model"] or "")
             rows = conn.execute(
                 """
-                SELECT id, role, content, reasoning, timestamp, token_count
+                SELECT id, role, content, reasoning, timestamp, token_count, display_metadata
                 FROM messages
                 WHERE session_id = ? AND coalesce(active, 1) = 1
                   AND role IN ('user', 'assistant', 'tool')
@@ -301,6 +332,7 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
                         }
                     )
                     previous_decision[raw_id] = decision_id
+                    _stamp_sdg(attributes, message["display_metadata"] if "display_metadata" in message.keys() else None)
                 spans.append(
                     make_span(
                         project="hermes",

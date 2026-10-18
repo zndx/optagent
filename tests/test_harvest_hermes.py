@@ -33,7 +33,8 @@ def test_hermes_messages_keep_their_timestamps_and_reasoning(tmp_path: Path) -> 
             """
             CREATE TABLE messages (
               id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
-              reasoning TEXT, timestamp REAL, token_count INTEGER, active INTEGER
+              reasoning TEXT, timestamp REAL, token_count INTEGER, active INTEGER,
+              display_metadata TEXT
             )
             """
         )
@@ -42,12 +43,22 @@ def test_hermes_messages_keep_their_timestamps_and_reasoning(tmp_path: Path) -> 
             ("agent-rtc-4fcf", "agent-rtc", "grok-4.6", "Extract arXiv 2510.18032 into wiki", 1_700_000_000.5, 0),
         )
         conn.execute(
-            "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (1, "agent-rtc-4fcf", "user", "Read arXiv 2510.18032", "", 1_700_000_000.5, 0, 1),
+            "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (1, "agent-rtc-4fcf", "user", "Read arXiv 2510.18032", "", 1_700_000_000.5, 0, 1, None),
         )
         conn.execute(
-            "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (2, "agent-rtc-4fcf", "assistant", "Filed the wiki note.", "checked the pdf", 1_700_000_001.0, 12, 1),
+            "INSERT INTO messages VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                2,
+                "agent-rtc-4fcf",
+                "assistant",
+                "Filed the wiki note.",
+                "checked the pdf",
+                1_700_000_001.0,
+                12,
+                1,
+                '{"links":[{"start":0,"end":5,"genus_iri":"https://signals.zndx.org/sdg#LIMS","genus_code":"9","rel_margin_h":0.55,"tau":0.1}]}',
+            ),
         )
     spans, mark = _harvest().hermes_spans(str(db))
     assert mark["table"] == "messages"
@@ -69,4 +80,8 @@ def test_hermes_messages_keep_their_timestamps_and_reasoning(tmp_path: Path) -> 
     assert assistant["attributes"]["semantica.entities"] == "2510.18032"
     assert "semantica.confidence" not in assistant["attributes"]
     assert "semantica.caused_by" not in assistant["attributes"]
+    assert assistant["attributes"]["aegir.genus_iri"] == "https://signals.zndx.org/sdg#LIMS"
+    assert assistant["attributes"]["aegir.start"] == 0
+    assert assistant["attributes"]["aegir.end"] == 5
+    assert "semantica.confidence" not in assistant["attributes"]
     assert "output.value" not in assistant["resource"]
