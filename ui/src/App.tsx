@@ -1,5 +1,5 @@
 import { Select, Switch } from "@cloudflare/kumo";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { applyColorMode, type ColorMode } from "./theme/colorMode";
 
@@ -1503,24 +1503,6 @@ function conceptLabel(iri: string, byIri: Map<string, LineupConcept>): string {
   return byIri.get(iri)?.label || iri.split("#").pop() || iri;
 }
 
-function TermLinks({ iris, byIri, onOpen }: { iris: string[]; byIri: Map<string, LineupConcept>; onOpen: (token: string) => void }) {
-  return iris.map((iri, index) => (
-    <span key={iri}>
-      {index > 0 ? " · " : null}
-      <Follow token={iri} label={conceptLabel(iri, byIri)} onOpen={onOpen} />
-    </span>
-  ));
-}
-
-function NameLinks({ names, onOpen }: { names: string[]; onOpen: (token: string) => void }) {
-  return names.map((name, index) => (
-    <span key={name}>
-      {index > 0 ? " · " : null}
-      <Follow token={`schema:${name}`} label={name} onOpen={onOpen} />
-    </span>
-  ));
-}
-
 function formatBinLabel(start: number, unit: string): string {
   const iso = new Date(start).toISOString();
   if (unit === "hour" || unit === "6h") return iso.slice(5, 16).replace("T", " ");
@@ -1536,15 +1518,33 @@ function domainTitle(domain: TimelineDomain, byIri: Map<string, LineupConcept>):
   return (domain.iri && byIri.get(domain.iri)?.label) || domain.code;
 }
 
-function StatLine({ row }: { row: TraceStats }) {
+function statRows(row: TraceStats): [string, string][] {
+  const rows: [string, string][] = [
+    ["traces", String(row.traces)],
+    ["sessions", String(row.sessions)],
+    ["tokens", String(row.tokens)],
+    ["grounded", String(row.grounded)],
+    ["augmented", String(row.augmented)],
+  ];
+  if (row.latency_ms != null) rows.push(["latency", `${row.latency_ms} ms`]);
+  if (row.total_cost != null) rows.push(["cost", String(row.total_cost)]);
+  if (row.errors != null) rows.push(["errors", String(row.errors)]);
+  if (row.undomain) rows.push(["no topic domain", String(row.undomain)]);
+  return rows;
+}
+
+function PropTable({ rows }: { rows: [string, ReactNode][] }) {
   return (
-    <>
-      <p>{row.traces} traces · {row.sessions} sessions · {row.tokens} tokens · {row.grounded} grounded</p>
-      <p className="muted">{row.augmented} augmented</p>
-      {row.latency_ms != null ? <p>Latency {row.latency_ms} ms</p> : null}
-      {row.total_cost != null ? <p>Cost {row.total_cost}</p> : null}
-      {row.errors != null ? <p>Errors {row.errors}</p> : null}
-    </>
+    <table className="sum-props">
+      <tbody>
+        {rows.map(([name, value]) => (
+          <tr key={name}>
+            <th>{name}</th>
+            <td>{value}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -1642,39 +1642,42 @@ function TrailPanels({
                   <span className="muted sum-panel-meta">{windowLabel} · {timeline.unit} bins</span>
                 </header>
                 <div className="sum-panel-body">
-                  <table className="sum-bin-table">
-                    <thead>
-                      <tr>
-                        <th>Bin</th>
-                        <th>Traces</th>
-                        <th>Tokens</th>
-                        <th>Grounded</th>
-                        {showLatency ? <th>Latency</th> : null}
-                        {showCost ? <th>Cost</th> : null}
-                        {showErrors ? <th>Errors</th> : null}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {timeline.bins.map((bin) => (
-                        <tr key={bin.start}>
-                          <td>
-                            <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
-                          </td>
-                          <td>
-                            <span className="sum-trend-track" aria-hidden="true">
-                              <span className="sum-trend-bar" style={{ width: `${(bin.traces / maxTraces) * 100}%` }} />
-                            </span>{" "}
-                            {bin.traces}
-                          </td>
-                          <td>{bin.tokens}</td>
-                          <td>{bin.grounded}</td>
-                          {showLatency ? <td>{bin.latency_ms ?? "—"}</td> : null}
-                          {showCost ? <td>{bin.total_cost ?? "—"}</td> : null}
-                          {showErrors ? <td>{bin.errors ?? "—"}</td> : null}
+                  <p><strong>Trends.</strong> {windowLabel}, one row per {timeline.unit} bin.</p>
+                  <div className="sum-scroll">
+                    <table className="sum-bin-table">
+                      <thead>
+                        <tr>
+                          <th>bin</th>
+                          <th>traces</th>
+                          <th>tokens</th>
+                          <th>grounded</th>
+                          {showLatency ? <th>latency</th> : null}
+                          {showCost ? <th>cost</th> : null}
+                          {showErrors ? <th>errors</th> : null}
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {timeline.bins.map((bin) => (
+                          <tr key={bin.start}>
+                            <td>
+                              <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
+                            </td>
+                            <td>
+                              <span className="sum-trend-track" aria-hidden="true">
+                                <span className="sum-trend-bar" style={{ width: `${(bin.traces / maxTraces) * 100}%` }} />
+                              </span>{" "}
+                              {bin.traces}
+                            </td>
+                            <td>{bin.tokens}</td>
+                            <td>{bin.grounded}</td>
+                            {showLatency ? <td>{bin.latency_ms ?? "—"}</td> : null}
+                            {showCost ? <td>{bin.total_cost ?? "—"}</td> : null}
+                            {showErrors ? <td>{bin.errors ?? "—"}</td> : null}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </article>
             );
@@ -1691,17 +1694,19 @@ function TrailPanels({
                 <div className="sum-panel-body">
                   {bin ? (
                     <>
-                      <StatLine row={bin} />
-                      {bin.undomain ? <p className="muted">{bin.undomain} traces in this bin have no topic domain.</p> : null}
+                      <p><strong>{formatBinLabel(stop.start, timeline.unit)}.</strong> {formatRange(stop.start, stop.end)}.</p>
+                      <PropTable rows={statRows(bin)} />
+                      <p className="sum-section">Domains.</p>
                       {bin.domains.length ? (
-                        <ul className="sum-links">
+                        <ul className="sum-note-list">
                           {bin.domains.map((domain) => (
                             <li key={domain.code}>
                               <Follow
                                 token={`domain|${domain.code}|${bin.start}|${bin.end}`}
-                                label={`${domainTitle(domain, byIri)} ${domain.traces}`}
+                                label={domainTitle(domain, byIri)}
                                 onOpen={(token) => onOpen(index, token)}
                               />
+                              <span className="muted"> · {domain.traces} traces</span>
                             </li>
                           ))}
                         </ul>
@@ -1709,15 +1714,17 @@ function TrailPanels({
                         <p className="muted">No topic domain in this bin.</p>
                       )}
                       {bin.top_iris?.length ? (
-                        <p>
-                          Leaves{" "}
-                          {bin.top_iris.map((item, leafIndex) => (
-                            <span key={item.iri}>
-                              {leafIndex > 0 ? " · " : null}
-                              <Follow token={item.iri} label={`${item.iri.split("#").pop()} ${item.count}`} onOpen={(token) => onOpen(index, token)} />
-                            </span>
-                          ))}
-                        </p>
+                        <>
+                          <p className="sum-section">Leaves.</p>
+                          <ul className="sum-note-list">
+                            {bin.top_iris.map((item) => (
+                              <li key={item.iri}>
+                                <Follow token={item.iri} label={item.iri.split("#").pop() || item.iri} onOpen={(token) => onOpen(index, token)} />
+                                <span className="muted"> · {item.count}</span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
                       ) : null}
                     </>
                   ) : (
@@ -1740,25 +1747,32 @@ function TrailPanels({
                 <div className="sum-panel-body">
                   {domain ? (
                     <>
-                      <StatLine row={domain} />
-                      {domain.iri ? (
-                        <p>
-                          <Follow token={domain.iri} label={domain.iri.split("#").pop() || domain.iri} onOpen={(token) => onOpen(index, token)} />
-                        </p>
-                      ) : null}
+                      <p><strong>{title}.</strong> Topic domain <span className="mono">{stop.code}</span> in {formatRange(stop.start, stop.end)}.</p>
+                      <PropTable
+                        rows={[
+                          ["code", stop.code],
+                          ["iri", domain.iri ? (
+                            <Follow token={domain.iri} label={domain.iri.split("#").pop() || domain.iri} onOpen={(token) => onOpen(index, token)} />
+                          ) : "—"],
+                          ...statRows(domain),
+                        ]}
+                      />
+                      <p className="sum-section">Leaves.</p>
                       {domain.top_iris?.length ? (
-                        <p>
-                          Leaves{" "}
-                          {domain.top_iris.map((item, leafIndex) => (
-                            <span key={item.iri}>
-                              {leafIndex > 0 ? " · " : null}
-                              <Follow token={item.iri} label={`${item.iri.split("#").pop()} ${item.count}`} onOpen={(token) => onOpen(index, token)} />
-                            </span>
+                        <ul className="sum-note-list">
+                          {domain.top_iris.map((item) => (
+                            <li key={item.iri}>
+                              <Follow token={item.iri} label={item.iri.split("#").pop() || item.iri} onOpen={(token) => onOpen(index, token)} />
+                              <span className="muted"> · {item.count}</span>
+                            </li>
                           ))}
-                        </p>
-                      ) : null}
+                        </ul>
+                      ) : (
+                        <p className="muted">No leaf IRI in this domain.</p>
+                      )}
+                      <p className="sum-section">Sessions.</p>
                       {domain.top_sessions?.length ? (
-                        <ul className="sum-links">
+                        <ul className="sum-note-list">
                           {domain.top_sessions.map((session) => (
                             <li key={session.id}>
                               <Follow
@@ -1766,11 +1780,13 @@ function TrailPanels({
                                 label={session.id}
                                 onOpen={(token) => onOpen(index, token)}
                               />
-                              <span className="muted"> {session.traces}</span>
+                              <span className="muted"> · {session.traces} traces</span>
                             </li>
                           ))}
                         </ul>
-                      ) : null}
+                      ) : (
+                        <p className="muted">No session in this domain.</p>
+                      )}
                     </>
                   ) : (
                     <p>This domain is outside the selected window.</p>
@@ -1789,23 +1805,8 @@ function TrailPanels({
                 <span className="muted sum-panel-meta">{windowLabel} · {timeline.unit} bins · {formatRange(timeline.start, timeline.end)}</span>
               </header>
               <div className="sum-panel-body">
-                <StatLine row={timeline.totals} />
-                {timeline.totals.undomain ? <p className="muted">{timeline.totals.undomain} traces in this window have no topic domain.</p> : null}
-                {timeline.domains.length ? (
-                  <p>
-                    Domains{" "}
-                    {timeline.domains.slice(0, 8).map((domain, domainIndex) => (
-                      <span key={domain.code}>
-                        {domainIndex > 0 ? " · " : null}
-                        <Follow
-                          token={`domain|${domain.code}|${timeline.start}|${timeline.end}`}
-                          label={`${domainTitle(domain, byIri)} ${domain.traces}`}
-                          onOpen={(token) => onOpen(index, token)}
-                        />
-                      </span>
-                    ))}
-                  </p>
-                ) : null}
+                <p><strong>Timeline.</strong> {windowLabel}, {timeline.unit} bins, {formatRange(timeline.start, timeline.end)}.</p>
+                <PropTable rows={statRows(timeline.totals)} />
                 <p>
                   <Follow token="trends" label="Trends" onOpen={(token) => onOpen(index, token)} />
                 </p>
@@ -1815,49 +1816,55 @@ function TrailPanels({
                       key={bin.start}
                       type="button"
                       className={`sum-bin ${heatLevel(bin.traces, maxTraces)}`}
-                      title={`${formatBinLabel(bin.start, timeline.unit)} · ${bin.traces} traces${bin.domains[0] ? ` · ${domainTitle(bin.domains[0], byIri)}` : ""}`}
+                      title={`${formatBinLabel(bin.start, timeline.unit)} · ${bin.traces} traces`}
                       onClick={() => onOpen(index, `bin|${bin.start}|${bin.end}`)}
                     />
                   ))}
                 </div>
-                <table className="sum-bin-table">
-                  <thead>
-                    <tr>
-                      <th>Bin</th>
-                      <th>Traces</th>
-                      <th>Sessions</th>
-                      <th>Tokens</th>
-                      <th>Grounded</th>
-                      <th>Domains</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {timeline.bins.map((bin) => (
-                      <tr key={bin.start}>
-                        <td>
-                          <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
-                        </td>
-                        <td>{bin.traces}</td>
-                        <td>{bin.sessions}</td>
-                        <td>{bin.tokens}</td>
-                        <td>{bin.grounded}</td>
-                        <td>
-                          {bin.domains.slice(0, 3).map((domain, domainIndex) => (
-                            <span key={domain.code}>
-                              {domainIndex > 0 ? " · " : null}
-                              <Follow
-                                token={`domain|${domain.code}|${bin.start}|${bin.end}`}
-                                label={`${domainTitle(domain, byIri)} ${domain.traces}`}
-                                onOpen={(token) => onOpen(index, token)}
-                              />
-                            </span>
-                          ))}
-                          {bin.domains.length > 3 ? <span className="muted"> · {bin.domains.length - 3} more</span> : null}
-                        </td>
+                <p className="sum-section">Bins.</p>
+                <div className="sum-scroll">
+                  <table className="sum-bin-table">
+                    <thead>
+                      <tr>
+                        <th>bin</th>
+                        <th>traces</th>
+                        <th>sessions</th>
+                        <th>tokens</th>
+                        <th>grounded</th>
                       </tr>
+                    </thead>
+                    <tbody>
+                      {timeline.bins.map((bin) => (
+                        <tr key={bin.start}>
+                          <td>
+                            <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
+                          </td>
+                          <td>{bin.traces}</td>
+                          <td>{bin.sessions}</td>
+                          <td>{bin.tokens}</td>
+                          <td>{bin.grounded}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="sum-section">Domains.</p>
+                {timeline.domains.length ? (
+                  <ul className="sum-note-list">
+                    {timeline.domains.map((domain) => (
+                      <li key={domain.code}>
+                        <Follow
+                          token={`domain|${domain.code}|${timeline.start}|${timeline.end}`}
+                          label={domainTitle(domain, byIri)}
+                          onOpen={(token) => onOpen(index, token)}
+                        />
+                        <span className="muted"> · {domain.traces} traces</span>
+                      </li>
                     ))}
-                  </tbody>
-                </table>
+                  </ul>
+                ) : (
+                  <p className="muted">No topic domain in this window. Open a bin to read that timeframe.</p>
+                )}
               </div>
             </article>
           );
@@ -1873,17 +1880,40 @@ function TrailPanels({
                 {term?.code ? <span className="muted sum-panel-meta">{term.code}</span> : null}
               </header>
               <div className="sum-panel-body">
-                {term ? <p>{term.definition || "No definition in this release."}</p> : <p>This term is not in the current release.</p>}
-                <p className="mono">{stop.iri}</p>
+                {term ? (
+                  <p><strong>{term.label}.</strong> {term.definition || "No definition in this release."}</p>
+                ) : (
+                  <p>This term is not in the current release.</p>
+                )}
+                <PropTable
+                  rows={[
+                    ...(term?.code ? [["notation", term.code] as [string, ReactNode]] : []),
+                    ["iri", <span className="mono" key={stop.iri}>{stop.iri}</span>],
+                  ]}
+                />
                 {term?.broader?.length ? (
-                  <p>
-                    broader <TermLinks iris={term.broader} byIri={byIri} onOpen={(token) => onOpen(index, token)} />
-                  </p>
+                  <>
+                    <p className="sum-section">broader.</p>
+                    <ul className="sum-note-list">
+                      {term.broader.map((iri) => (
+                        <li key={iri}>
+                          <Follow token={iri} label={conceptLabel(iri, byIri)} onOpen={(token) => onOpen(index, token)} />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 ) : null}
                 {term?.narrower?.length ? (
-                  <p>
-                    narrower <TermLinks iris={term.narrower} byIri={byIri} onOpen={(token) => onOpen(index, token)} />
-                  </p>
+                  <>
+                    <p className="sum-section">narrower.</p>
+                    <ul className="sum-note-list">
+                      {term.narrower.map((iri) => (
+                        <li key={iri}>
+                          <Follow token={iri} label={conceptLabel(iri, byIri)} onOpen={(token) => onOpen(index, token)} />
+                        </li>
+                      ))}
+                    </ul>
+                  </>
                 ) : null}
               </div>
             </article>
@@ -1891,9 +1921,7 @@ function TrailPanels({
         }
         if (stop.kind === "schema") {
           const table = byTable.get(stop.name);
-          const inboundAll = view.schema.filter((item) => (item.refs || []).includes(stop.name)).map((item) => item.name);
-          const inbound = inboundAll.slice(0, 16);
-          const inboundMore = inboundAll.length - inbound.length;
+          const inbound = view.schema.filter((item) => (item.refs || []).includes(stop.name)).map((item) => item.name);
           return (
             <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
               <header className="sum-panel-head">
@@ -1901,25 +1929,48 @@ function TrailPanels({
                 {closer}
               </header>
               <div className="sum-panel-body">
-                {table ? <p className="mono">{table.location}</p> : <p>This table is not in the current release.</p>}
-                {table?.columns?.length ? (
-                  <ul className="sum-links">
-                    {table.columns.map((column) => (
-                      <li key={column} className="mono">{column}</li>
-                    ))}
-                  </ul>
-                ) : null}
-                {table?.refs?.length ? (
-                  <p>
-                    references <NameLinks names={table.refs} onOpen={(token) => onOpen(index, token)} />
-                  </p>
-                ) : null}
-                {inbound.length ? (
-                  <p>
-                    referenced by <NameLinks names={inbound} onOpen={(token) => onOpen(index, token)} />
-                    {inboundMore ? <span className="muted"> · {inboundMore} more</span> : null}
-                  </p>
-                ) : null}
+                {table ? (
+                  <>
+                    <p><strong>{stop.name}.</strong></p>
+                    <PropTable rows={[["location", <span className="mono" key={table.location}>{table.location}</span>]]} />
+                    {table.columns?.length ? (
+                      <>
+                        <p className="sum-section">Columns.</p>
+                        <ul className="sum-note-list">
+                          {table.columns.map((column) => (
+                            <li key={column} className="mono">{column}</li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
+                    <p className="sum-section">References.</p>
+                    {table.refs?.length ? (
+                      <ul className="sum-note-list">
+                        {table.refs.map((name) => (
+                          <li key={name}>
+                            <Follow token={`schema:${name}`} label={name} onOpen={(token) => onOpen(index, token)} />
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted">No foreign key.</p>
+                    )}
+                    <p className="sum-section">Referenced by.</p>
+                    {inbound.length ? (
+                      <ul className="sum-note-list">
+                        {inbound.map((name) => (
+                          <li key={name}>
+                            <Follow token={`schema:${name}`} label={name} onOpen={(token) => onOpen(index, token)} />
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="muted">No table references this one.</p>
+                    )}
+                  </>
+                ) : (
+                  <p>This table is not in the current release.</p>
+                )}
               </div>
             </article>
           );
@@ -1940,54 +1991,64 @@ function TrailPanels({
               <div className="sum-panel-body">
                 {tracing ? (
                   <>
-                    <p>{tracing.traces} traces · {tracing.sessions} sessions · {tracing.tokens} tokens · {tracing.grounded} grounded</p>
-                    <p className="muted">{tracing.augmented} augmented</p>
-                    <p>
-                      Genera{" "}
-                      {tracing.genera.length
-                        ? tracing.genera.map((item, genusIndex) => {
-                            const term = byCode.get(item.code);
-                            const gap = genusIndex > 0 ? " · " : "";
-                            return term ? (
-                              <span key={item.code}>
-                                {gap}
-                                <Follow token={term.iri} label={`${item.code} ${item.count}`} onOpen={(token) => onOpen(index, token)} />
-                              </span>
-                            ) : (
-                              <span key={item.code}>{gap}{item.code} {item.count}</span>
-                            );
-                          })
-                        : "—"}
-                    </p>
-                    <p>
-                      Leaves{" "}
-                      {tracing.top_iris.length
-                        ? tracing.top_iris.map((item, leafIndex) => (
-                            <span key={item.iri}>
-                              {leafIndex > 0 ? " · " : null}
-                              <Follow
-                                token={item.iri}
-                                label={`${item.iri.split("#").pop()} ${item.count}`}
-                                onOpen={(token) => onOpen(index, token)}
-                              />
-                            </span>
-                          ))
-                        : "—"}
-                    </p>
-                    {tracing.latency_ms != null ? <p>Latency {tracing.latency_ms} ms</p> : null}
-                    {tracing.total_cost != null ? <p>Cost {tracing.total_cost}</p> : null}
-                    {tracing.errors != null ? <p>Errors {tracing.errors}</p> : null}
+                    <p><strong>{stop.project}.</strong></p>
+                    <PropTable
+                      rows={[
+                        ["traces", String(tracing.traces)],
+                        ["sessions", String(tracing.sessions)],
+                        ["tokens", String(tracing.tokens)],
+                        ["grounded", String(tracing.grounded)],
+                        ["augmented", String(tracing.augmented)],
+                        ...(tracing.latency_ms != null ? [["latency", `${tracing.latency_ms} ms`] as [string, string]] : []),
+                        ...(tracing.total_cost != null ? [["cost", String(tracing.total_cost)] as [string, string]] : []),
+                        ...(tracing.errors != null ? [["errors", String(tracing.errors)] as [string, string]] : []),
+                      ]}
+                    />
+                    <p className="sum-section">Domains.</p>
+                    {tracing.genera.length ? (
+                      <ul className="sum-note-list">
+                        {tracing.genera.map((item) => {
+                          const term = byCode.get(item.code);
+                          return (
+                            <li key={item.code}>
+                              {term ? (
+                                <Follow token={term.iri} label={term.label} onOpen={(token) => onOpen(index, token)} />
+                              ) : (
+                                <span className="mono">{item.code}</span>
+                              )}
+                              <span className="muted"> · {item.count} traces</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    ) : (
+                      <p className="muted">No topic domain in this project.</p>
+                    )}
+                    {tracing.top_iris.length ? (
+                      <>
+                        <p className="sum-section">Leaves.</p>
+                        <ul className="sum-note-list">
+                          {tracing.top_iris.map((item) => (
+                            <li key={item.iri}>
+                              <Follow token={item.iri} label={item.iri.split("#").pop() || item.iri} onOpen={(token) => onOpen(index, token)} />
+                              <span className="muted"> · {item.count}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      </>
+                    ) : null}
                   </>
                 ) : (
                   <p>{loading ? "Loading traces…" : "No traces in this window."}</p>
                 )}
+                <p className="sum-section">Sessions.</p>
                 {loading && view.sessions.length === 0 ? <p className="muted">Loading sessions…</p> : null}
                 {view.sessions.length ? (
-                  <ul className="sum-links">
+                  <ul className="sum-note-list">
                     {view.sessions.map((session) => (
                       <li key={session.id}>
                         <Follow token={`session:${session.id}`} label={session.id} onOpen={(token) => onOpen(index, token)} />
-                        <span className="muted"> {session.traces}</span>
+                        <span className="muted"> · {session.traces} traces</span>
                       </li>
                     ))}
                   </ul>

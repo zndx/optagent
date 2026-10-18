@@ -236,6 +236,21 @@
   padding: 0;
   cursor: pointer;
 }
+.sum-props { width: 100%; border-collapse: collapse; font-size: 0.82rem; margin: 0.35rem 0 0.75rem; }
+.sum-props th {
+  width: 1%;
+  white-space: nowrap;
+  text-align: left;
+  font-weight: 500;
+  color: var(--text-color-kumo-subtle);
+  padding: 2px 0.75rem 2px 0;
+  border-bottom: 1px solid var(--color-kumo-line);
+}
+.sum-props td { padding: 2px 0; border-bottom: 1px solid var(--color-kumo-line); }
+.sum-section { margin: 0.85rem 0 0.2rem; font-weight: 650; }
+.sum-note-list { margin: 0.2rem 0 0.6rem; padding-left: 1.1rem; }
+.sum-note-list li { margin: 0.15rem 0; }
+.sum-scroll { overflow-x: auto; max-width: 100%; }
 .sum-bin-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
 .sum-bin-table th, .sum-bin-table td {
   text-align: left;
