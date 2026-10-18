@@ -28,6 +28,7 @@ def test_session_ids_are_prefixed_and_bare_uuids_do_not_collide() -> None:
     assert gaius == f"gaius:cognition:{shared}"
     assert metabase == f"metabase:{shared}"
     assert gaius != metabase
+    assert session_id("hermes", "agent-rtc", "4fcf03d6b815") == "hermes:agent-rtc:4fcf03d6b815"
     assert trace_id_for("gaius", shared) != trace_id_for("metabase", shared)
     with pytest.raises(ValueError):
         session_id("semantica", shared)

@@ -16,7 +16,7 @@ import json
 import uuid
 from pathlib import Path
 
-PEERS = frozenset({"gaius", "metabase"})
+PEERS = frozenset({"gaius", "metabase", "hermes"})
 _TRACE = uuid.UUID("6f707461-6765-4e74-8000-000000000001")
 
 
@@ -25,7 +25,7 @@ def session_id(peer: str, *parts: str) -> str:
 
     name = str(peer).strip()
     if name not in PEERS:
-        raise ValueError(f"peer must be gaius or metabase, got {name!r}")
+        raise ValueError(f"peer must be gaius, metabase, or hermes, got {name!r}")
     local = ":".join(str(part).strip() for part in parts if str(part).strip())
     if not local:
         raise ValueError("session id needs a local part")
@@ -78,10 +78,8 @@ def make_span(
     if output_value:
         attrs["output.value"] = output_value
         attrs["output.mime_type"] = "text/plain"
-    if project == "gaius":
-        attrs["gaius.activity"] = activity
-    elif project == "metabase":
-        attrs["metabase.activity"] = activity
+    if project in PEERS:
+        attrs[f"{project}.activity"] = activity
     for key, value in (attributes or {}).items():
         if value is None or value == "":
             continue

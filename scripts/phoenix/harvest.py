@@ -12,6 +12,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import sqlite3
 import tarfile
 import uuid
 from datetime import datetime, timezone
@@ -19,6 +21,28 @@ from pathlib import Path
 
 from optagent.phoenix_spans import make_span, session_id, write_jsonl
 from optagent.snapshot import load_bundled
+
+
+_PREPRINT = re.compile(r"arxiv|biorxiv|medrxiv|wiki:", re.IGNORECASE)
+_TEXT_CAP = 32_000
+
+
+def _clip(text: str) -> str:
+    body = (text or "").strip()
+    if len(body) <= _TEXT_CAP:
+        return body
+    return body[: _TEXT_CAP - 1].rstrip() + "…"
+
+
+def _unix_ns(value) -> int:
+    if value is None:
+        return 0
+    if isinstance(value, datetime):
+        return _ns(value)
+    try:
+        return int(float(value) * 1_000_000_000)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _ns(value) -> int:
@@ -175,7 +199,96 @@ def metabase_spans(database_url: str) -> tuple[list[dict], dict]:
     return spans, watermark
 
 
-def build_archive(dest: Path, gaius_url: str, metabase_url: str) -> Path:
+def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
+    """Local Hermes SessionDB. AgentRTC turns and the other Hermes sources.
+
+    Mistral's hosted observability is not available. The trace is the
+    message row: content, reasoning, and the unix timestamp Hermes stored.
+    """
+
+    path = Path(db_path).expanduser()
+    if not path.is_file():
+        raise FileNotFoundError(str(path))
+    spans: list[dict] = []
+    watermark = {"table": "messages", "max": ""}
+    uri = f"file:{path}?mode=ro"
+    with sqlite3.connect(uri, uri=True) as conn:
+        conn.row_factory = sqlite3.Row
+        sessions = conn.execute(
+            """
+            SELECT id, source, model, title, started_at
+            FROM sessions
+            WHERE coalesce(hidden, 0) = 0
+            ORDER BY started_at
+            """
+        ).fetchall()
+        previous: dict[str, str] = {}
+        latest = 0.0
+        for session in sessions:
+            raw_id = str(session["id"])
+            source = str(session["source"] or "hermes")
+            local = raw_id[len("agent-rtc-") :] if source == "agent-rtc" and raw_id.startswith("agent-rtc-") else raw_id
+            sid = session_id("hermes", source, local)
+            title = str(session["title"] or "").strip()
+            model = str(session["model"] or "")
+            rows = conn.execute(
+                """
+                SELECT id, role, content, reasoning, timestamp, token_count
+                FROM messages
+                WHERE session_id = ? AND coalesce(active, 1) = 1
+                  AND role IN ('user', 'assistant', 'tool')
+                ORDER BY timestamp, id
+                """,
+                (raw_id,),
+            ).fetchall()
+            for message in rows:
+                role = str(message["role"] or "")
+                content = _clip(str(message["content"] or ""))
+                reasoning = _clip(str(message["reasoning"] or ""))
+                stamp = message["timestamp"]
+                if stamp and float(stamp) > latest:
+                    latest = float(stamp)
+                preprint = bool(_PREPRINT.search(title) or _PREPRINT.search(content))
+                activity = "preprint" if preprint else source
+                if role == "user":
+                    previous[raw_id] = content
+                    incoming, outgoing, kind = content, "", "CHAIN"
+                elif role == "assistant":
+                    incoming = previous.get(raw_id) or title
+                    outgoing = content
+                    if reasoning:
+                        outgoing = (outgoing + "\n\n## Reasoning\n\n" + reasoning).strip()
+                    kind = "LLM"
+                else:
+                    incoming, outgoing, kind = title or role, content, "TOOL"
+                name = title or (content.splitlines()[0][:120] if content else role)
+                spans.append(
+                    make_span(
+                        project="hermes",
+                        session=sid,
+                        name=name[:160],
+                        activity=activity,
+                        capability="preprint" if preprint else "conversation",
+                        service_name="hermes" if source != "agent-rtc" else "agent-rtc",
+                        trace_key=f"{raw_id}:{message['id']}",
+                        start_time_unix_nano=_unix_ns(stamp or session["started_at"]),
+                        input_value=incoming,
+                        output_value=outgoing,
+                        span_kind=kind,
+                        attributes={
+                            "hermes.session": raw_id,
+                            "hermes.source": source,
+                            "llm.model_name": model,
+                            "llm.token_count.total": int(message["token_count"] or 0),
+                        },
+                    )
+                )
+        if latest:
+            watermark["max"] = datetime.fromtimestamp(latest, timezone.utc).isoformat()
+    return spans, watermark
+
+
+def build_archive(dest: Path, gaius_url: str, metabase_url: str, hermes_db: str) -> Path:
     pointer = load_bundled()
     members = [
         {
@@ -196,10 +309,16 @@ def build_archive(dest: Path, gaius_url: str, metabase_url: str) -> Path:
         metabase, metabase_mark = metabase_spans(metabase_url)
     except Exception as exc:
         metabase, metabase_mark = [], {"table": "metabot_message", "error": str(exc)}
+    try:
+        hermes, hermes_mark = hermes_spans(hermes_db)
+    except Exception as exc:
+        hermes, hermes_mark = [], {"table": "messages", "error": str(exc)}
     by_project["gaius"] = gaius
     by_project["metabase"] = metabase
+    by_project["hermes"] = hermes
     summary["watermark.gaius"] = json.dumps(gaius_mark)
     summary["watermark.metabase"] = json.dumps(metabase_mark)
+    summary["watermark.hermes"] = json.dumps(hermes_mark)
     dest.mkdir(parents=True, exist_ok=True)
     for project, spans in by_project.items():
         relative = f"projects/{project}/spans.jsonl"
@@ -238,10 +357,11 @@ def main() -> None:
     parser.add_argument("--out", default="/raid/build/optagent/signals-snapshot")
     parser.add_argument("--gaius-url", default="postgresql://127.0.0.1:5444/zndx_gaius")
     parser.add_argument("--metabase-url", default="postgresql://127.0.0.1:5432/metabase")
+    parser.add_argument("--hermes-db", default="~/.hermes/state.db")
     args = parser.parse_args()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     dest = Path(args.out) / stamp
-    archive = build_archive(dest, args.gaius_url, args.metabase_url)
+    archive = build_archive(dest, args.gaius_url, args.metabase_url, args.hermes_db)
     print(archive)
 
 
