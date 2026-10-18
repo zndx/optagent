@@ -585,7 +585,7 @@ def _settings_payload(enabled: bool) -> bytes:
 def _ui_file(route: str) -> Path | None:
     if not _UI_DIST.is_dir():
         return None
-    if route in {"/", "/index.html", "/sessions", "/summary", "/terminal", "/settings", "/settings/"}:
+    if route in {"/", "/index.html", "/sessions", "/summary", "/terminal", "/settings", "/settings/"} or route.startswith("/summary/"):
         candidate = _UI_DIST / "index.html"
     elif route.startswith("/assets/") or route.startswith("/brand/"):
         candidate = (_UI_DIST / route.lstrip("/")).resolve()

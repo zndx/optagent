@@ -160,6 +160,13 @@ def test_framed_pages_share_one_shell() -> None:
         assert 'id="root"' in page
         shell = shell or page
         assert page == shell
+    status, content_type, body, _extra = APP.response_for(
+        "GET",
+        "/summary/hermes/agent-rtc:802225c3cb6e/DATAENG_LINEAGE",
+    )
+    assert status == 200
+    assert content_type.startswith("text/html")
+    assert body.decode("utf-8") == shell
 
 
 def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:

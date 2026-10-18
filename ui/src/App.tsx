@@ -186,6 +186,7 @@ const NAV = [
 
 function pathName(): string {
   const path = window.location.pathname.replace(/\/$/, "") || "/";
+  if (path === "/summary" || path.startsWith("/summary/")) return "/summary";
   return NAV.some((item) => item.href === path) ? path : "/";
 }
 
@@ -867,9 +868,11 @@ const SESSION_CATEGORIES = [
 function RichSentence({
   parts,
   onOpen,
+  hrefFor,
 }: {
   parts: { text: string; iri?: string; label?: string }[];
   onOpen?: (iri: string) => void;
+  hrefFor?: (iri: string) => string;
 }) {
   return (
     <div className="rich-body">
@@ -877,7 +880,7 @@ function RichSentence({
         part.iri ? (
           <a
             key={index}
-            href={`/summary?open=${encodeURIComponent(part.iri)}`}
+            href={hrefFor ? hrefFor(part.iri) : `/summary/term/${part.iri.split("#").pop() || ""}`}
             title={part.label || part.iri}
             onClick={(event) => {
               if (!onOpen || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
@@ -1359,7 +1362,8 @@ type TrailStop =
   | { kind: "lexicon"; iri: string }
   | { kind: "schema"; name: string }
   | { kind: "tracing"; project: string }
-  | { kind: "session"; id: string; project?: string };
+  | { kind: "session"; id: string; project?: string }
+  | { kind: "segment"; project: string; session: string; fragment: string };
 
 const TRAIL_STORAGE = "optagent:summary-trail";
 const ROOT_TITLES: Record<string, string> = { archive: "ARCHIVE", current: "CURRENT", scratch: "SCRATCH" };
@@ -1373,6 +1377,7 @@ function trailKey(stop: TrailStop): string {
   if (stop.kind === "lexicon") return `lexicon:${stop.iri}`;
   if (stop.kind === "schema") return `schema:${stop.name}`;
   if (stop.kind === "tracing") return `tracing:${stop.project}`;
+  if (stop.kind === "segment") return `segment:${stop.project}:${stop.session}:${stop.fragment}`;
   return `session:${stop.project || ""}:${stop.id}`;
 }
 
@@ -1392,6 +1397,9 @@ function isTrailStop(value: unknown): value is TrailStop {
   if (stop.kind === "session") {
     return typeof stop.id === "string" && stop.id.length > 0 && (stop.project === undefined || typeof stop.project === "string");
   }
+  if (stop.kind === "segment") {
+    return stop.project.length > 0 && stop.session.length > 0 && /^[A-Za-z][A-Za-z0-9_]*$/.test(stop.fragment);
+  }
   return false;
 }
 
@@ -1400,18 +1408,6 @@ function finitePair(start: string, end: string): { start: number; end: number } 
   const right = Number(end);
   if (!Number.isFinite(left) || !Number.isFinite(right) || right <= left) return null;
   return { start: left, end: right };
-}
-
-function openToken(stop: TrailStop): string | null {
-  if (stop.kind === "timeline") return "timeline";
-  if (stop.kind === "trends") return "trends";
-  if (stop.kind === "bin") return `bin|${stop.start}|${stop.end}`;
-  if (stop.kind === "domain") return `domain|${stop.code}|${stop.start}|${stop.end}`;
-  if (stop.kind === "lexicon") return stop.iri;
-  if (stop.kind === "schema") return `schema:${stop.name}`;
-  if (stop.kind === "session") return stop.project ? `session|${stop.project}|${stop.id}` : `session:${stop.id}`;
-  if (stop.kind === "tracing") return `tracing:${stop.project}`;
-  return null;
 }
 
 function stopFromToken(token: string): TrailStop | null {
@@ -1429,12 +1425,24 @@ function stopFromToken(token: string): TrailStop | null {
   }
   if (token.startsWith("https://signals.zndx.org/sdg#")) return { kind: "lexicon", iri: token };
   if (token.startsWith("schema:")) return { kind: "schema", name: token.slice("schema:".length) };
+  if (token.startsWith("segment|")) {
+    const parts = token.split("|");
+    const project = parts[1] || "";
+    const fragment = parts[parts.length - 1] || "";
+    const session = parts.slice(2, -1).join("|");
+    if (!project || !session || !fragment) return null;
+    return { kind: "segment", project, session, fragment };
+  }
   if (token.startsWith("session|")) {
     const parts = token.split("|");
     if (!parts[1] || !parts[2]) return null;
     return { kind: "session", project: parts[1], id: parts.slice(2).join("|") };
   }
-  if (token.startsWith("session:")) return { kind: "session", id: token.slice("session:".length) };
+  if (token.startsWith("session:")) {
+    const id = token.slice("session:".length);
+    const project = id.split(":")[0] || "";
+    return { kind: "session", id, project: LINEUP_PROJECTS.has(project) ? project : undefined };
+  }
   if (token.startsWith("tracing:")) return { kind: "tracing", project: token.slice("tracing:".length) };
   return null;
 }
@@ -1458,20 +1466,122 @@ function loadStoredTrail(): { root: string; trail: TrailStop[] } | null {
   }
 }
 
+const LINEUP_PROJECTS = new Set(["gaius", "hermes", "metabase", "semantica"]);
+
+function iriFragment(iri: string): string {
+  return iri.split("#").pop() || iri;
+}
+
+function sessionLocal(id: string, project: string): string {
+  const prefix = `${project}:`;
+  return id.startsWith(prefix) ? id.slice(prefix.length) : id;
+}
+
+function prettyPart(part: string): string {
+  return encodeURIComponent(part).replace(/%3A/gi, ":");
+}
+
+function isFragment(part: string): boolean {
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(part);
+}
+
+function trailToPath(trail: TrailStop[]): string {
+  const parts: string[] = [];
+  for (const stop of trail) {
+    if (stop.kind === "timeline" || stop.kind === "root") continue;
+    if (stop.kind === "trends") {
+      parts.push("trends");
+    } else if (stop.kind === "tracing") {
+      parts.push(stop.project);
+    } else if (stop.kind === "session") {
+      const project = stop.project || stop.id.split(":")[0] || "";
+      if (parts[parts.length - 1] !== project) parts.push(project);
+      parts.push(sessionLocal(stop.id, project));
+    } else if (stop.kind === "segment") {
+      if (parts[parts.length - 1] !== stop.project) parts.push(stop.project);
+      parts.push(sessionLocal(stop.session, stop.project));
+      parts.push(stop.fragment);
+    } else if (stop.kind === "lexicon") {
+      parts.push("term", iriFragment(stop.iri));
+    } else if (stop.kind === "schema") {
+      parts.push("table", stop.name);
+    } else if (stop.kind === "bin") {
+      parts.push("bin", String(stop.start), String(stop.end));
+    } else if (stop.kind === "domain") {
+      parts.push("domain", stop.code, String(stop.start), String(stop.end));
+    }
+  }
+  return parts.length ? `/summary/${parts.map(prettyPart).join("/")}` : "/summary";
+}
+
+function parseLineupPath(pathname: string): TrailStop[] | null {
+  const path = pathname.replace(/\/$/, "") || "/";
+  if (path === "/summary") return null;
+  if (!path.startsWith("/summary/")) return null;
+  const parts = path.slice("/summary/".length).split("/").map((part) => decodeURIComponent(part)).filter(Boolean);
+  const trail: TrailStop[] = [{ kind: "timeline" }];
+  let index = 0;
+  while (index < parts.length) {
+    const part = parts[index];
+    if (part === "timeline") {
+      index += 1;
+    } else if (part === "trends") {
+      trail.push({ kind: "trends" });
+      index += 1;
+    } else if (part === "term" && parts[index + 1]) {
+      trail.push({ kind: "lexicon", iri: `https://signals.zndx.org/sdg#${parts[index + 1]}` });
+      index += 2;
+    } else if (part === "table" && parts[index + 1]) {
+      trail.push({ kind: "schema", name: parts[index + 1] });
+      index += 2;
+    } else if (part === "bin") {
+      const pair = finitePair(parts[index + 1] || "", parts[index + 2] || "");
+      if (!pair) return trail;
+      trail.push({ kind: "bin", ...pair });
+      index += 3;
+    } else if (part === "domain") {
+      const code = parts[index + 1] || "";
+      const pair = finitePair(parts[index + 2] || "", parts[index + 3] || "");
+      if (!code || !pair) return trail;
+      trail.push({ kind: "domain", code, ...pair });
+      index += 4;
+    } else if (LINEUP_PROJECTS.has(part)) {
+      const project = part;
+      trail.push({ kind: "tracing", project });
+      index += 1;
+      if (index >= parts.length || parts[index] === "term" || parts[index] === "table") continue;
+      const local = parts[index];
+      const session = `${project}:${local}`;
+      index += 1;
+      if (index < parts.length && isFragment(parts[index])) {
+        trail.push({ kind: "segment", project, session, fragment: parts[index] });
+        index += 1;
+      } else {
+        trail.push({ kind: "session", project, id: session });
+      }
+    } else {
+      return trail.length > 1 ? trail : null;
+    }
+  }
+  return trail;
+}
+
 function projectFromTrail(stops: TrailStop[]): string {
   for (let index = stops.length - 1; index >= 0; index -= 1) {
     const stop = stops[index];
     if (stop.kind === "tracing") return stop.project;
+    if (stop.kind === "segment") return stop.project;
     if (stop.kind === "session" && stop.project) return stop.project;
   }
   return "";
 }
 
 function initialTrail(): TrailStop[] {
+  const parsed = parseLineupPath(window.location.pathname);
+  if (parsed) return parsed;
   const opened = readOpen();
-  const stored = loadStoredTrail();
-  if (opened && stored?.trail.some((stop) => trailKey(stop) === trailKey(opened))) return stored.trail;
   if (opened) return [opened];
+  const stored = loadStoredTrail();
   if (
     stored?.trail.length === 1
     && stored.trail[0].kind === "root"
@@ -1483,10 +1593,16 @@ function initialTrail(): TrailStop[] {
   return [{ kind: "timeline" }];
 }
 
+function initialWindow(fallback: string): string {
+  const requested = new URLSearchParams(window.location.search).get("w");
+  if (requested && WINDOWS.some(([value]) => value === requested)) return requested;
+  return fallback;
+}
+
 function Follow({ token, label, onOpen }: { token: string; label: string; onOpen: (token: string) => void }) {
   return (
     <a
-      href={`/summary?open=${encodeURIComponent(token)}`}
+      href={trailToPath([stopFromToken(token) || { kind: "timeline" }])}
       title={token}
       onClick={(event) => {
         if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
@@ -2047,11 +2163,50 @@ function TrailPanels({
                   <ul className="sum-note-list">
                     {view.sessions.map((session) => (
                       <li key={session.id}>
-                        <Follow token={`session:${session.id}`} label={session.id} onOpen={(token) => onOpen(index, token)} />
+                        <Follow token={`session|${stop.project}|${session.id}`} label={session.id} onOpen={(token) => onOpen(index, token)} />
                         <span className="muted"> · {session.traces} traces</span>
                       </li>
                     ))}
                   </ul>
+                ) : null}
+              </div>
+            </article>
+          );
+        }
+        if (stop.kind === "segment") {
+          const session = view.sessions.find((item) => item.id === stop.session);
+          const term = [...byIri.values()].find((item) => iriFragment(item.iri) === stop.fragment);
+          const matches = (session?.items || []).filter((item) => item.rich.some((part) => iriFragment(part.iri || "") === stop.fragment));
+          const permalink = trailToPath([
+            { kind: "timeline" },
+            { kind: "tracing", project: stop.project },
+            stop,
+          ]);
+          return (
+            <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
+              <header className="sum-panel-head">
+                <h2>{term?.label || stop.fragment}</h2>
+                {closer}
+                <span className="muted sum-panel-meta">{term?.code || stop.fragment} · {stop.session}</span>
+              </header>
+              <div className="sum-panel-body">
+                <p className="sum-permalink"><a href={permalink}>{permalink}</a></p>
+                {matches.length ? matches.map((item, itemIndex) => (
+                  <div key={`${item.generated_at}-${itemIndex}`}>
+                    <p className="muted">generated {formatStamp(item.generated_at)}</p>
+                    <RichSentence
+                      parts={item.rich}
+                      hrefFor={(iri) => `/summary/term/${iriFragment(iri)}`}
+                      onOpen={(iri) => onOpen(index, iri)}
+                    />
+                  </div>
+                )) : (
+                  <p>{loading ? "Loading the segment…" : "This segment is not in the loaded window."}</p>
+                )}
+                {term ? (
+                  <p>
+                    <Follow token={term.iri} label={term.label} onOpen={(token) => onOpen(index, token)} />
+                  </p>
                 ) : null}
               </div>
             </article>
@@ -2074,7 +2229,15 @@ function TrailPanels({
                     {item.augmented_at ? ` · augmented ${formatStamp(item.augmented_at)}` : ""}
                   </p>
                   {item.rich.some((part) => part.iri) ? (
-                    <RichSentence parts={item.rich} onOpen={(iri) => onOpen(index, iri)} />
+                    <RichSentence
+                      parts={item.rich}
+                      hrefFor={(iri) => trailToPath([
+                        { kind: "timeline" },
+                        { kind: "tracing", project: stop.project || "" },
+                        { kind: "segment", project: stop.project || "", session: stop.id, fragment: iriFragment(iri) },
+                      ])}
+                      onOpen={(iri) => onOpen(index, `segment|${stop.project || ""}|${stop.id}|${iriFragment(iri)}`)}
+                    />
                   ) : (
                     <p>{item.output}</p>
                   )}
@@ -2093,7 +2256,7 @@ function TrailPanels({
 function LineupSummary({ lineup }: { lineup: LineupDoc }) {
   const stored = useRef(loadStoredTrail());
   const [root, setRoot] = useState(stored.current?.root || "current");
-  const [windowId, setWindowId] = useState(lineup.tracing.window || "365d");
+  const [windowId, setWindowId] = useState(initialWindow(lineup.tracing.window || "365d"));
   const [trail, setTrail] = useState<TrailStop[]>(initialTrail);
   const [project, setProject] = useState(projectFromTrail(initialTrail()));
   const [view, setView] = useState<LineupDoc>(lineup);
@@ -2132,34 +2295,26 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
     if (node) node.scrollTo({ left: node.scrollWidth });
   }, [trail, root]);
   useEffect(() => {
-    const focused = trail[trail.length - 1];
-    if (!focused) return;
     const extend = trail.length > prevLen.current;
     prevLen.current = trail.length;
-    const token = openToken(focused);
-    const url = new URL(window.location.href);
-    if (token) url.searchParams.set("open", token);
-    else url.searchParams.delete("open");
-    const next = `${url.pathname}${url.search}`;
+    const path = trailToPath(trail);
+    const search = windowId && windowId !== "365d" ? `?w=${encodeURIComponent(windowId)}` : "";
+    const next = `${path}${search}`;
     const current = `${window.location.pathname}${window.location.search}`;
     if (next === current) return;
     if (extend) history.pushState(null, "", next);
     else history.replaceState(null, "", next);
-  }, [trail]);
+  }, [trail, windowId]);
   useEffect(() => {
     const onPop = () => {
-      const opened = readOpen();
-      setTrail((current) => {
-        if (!opened) return root === "current" ? [{ kind: "timeline" }] : [{ kind: "root", id: root }];
-        const key = trailKey(opened);
-        const index = current.findIndex((stop) => trailKey(stop) === key);
-        if (index >= 0) return current.slice(0, index + 1);
-        return [...current, opened];
-      });
+      const parsed = parseLineupPath(window.location.pathname);
+      const requested = new URLSearchParams(window.location.search).get("w");
+      if (requested && WINDOWS.some(([value]) => value === requested)) setWindowId(requested);
+      setTrail(parsed ?? [{ kind: "timeline" }]);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [root]);
+  }, []);
   const byIri = useMemo(() => new Map(view.lexicon.map((item) => [item.iri, item])), [view.lexicon]);
   const byCode = useMemo(() => {
     const map = new Map<string, LineupConcept>();

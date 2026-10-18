@@ -41,8 +41,9 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "Close panel" in source
     assert "This term is not in the current release." in source
     assert "This table is not in the current release." in source
-    assert "/summary?open=" in source
-    assert "encodeURIComponent(part.iri)" in source
+    assert "/summary/term/" in source
+    assert "function trailToPath" in source
+    assert "kind: \"segment\"" in source
     assert 'id="terminal"' in source
     assert "Ghostty not connected" in source
     assert "height={28}" in source
