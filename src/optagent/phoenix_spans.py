@@ -319,6 +319,15 @@ def trace_detail(spans: list[dict], trace_id: str) -> dict | None:
         "llm.token_count.total",
         "metabase.question.id",
         "user.id",
+        "semantica.category",
+        "semantica.decision_maker",
+        "semantica.caller_project",
+        "semantica.caller_agent",
+        "semantica.run_id",
+        "semantica.tx_id",
+        "semantica.caused_by",
+        "semantica.relationship",
+        "semantica.entities",
     )
     for span in spans:
         if str(span.get("trace_id") or "") != trace_id:

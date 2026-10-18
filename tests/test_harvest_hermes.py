@@ -58,4 +58,15 @@ def test_hermes_messages_keep_their_timestamps_and_reasoning(tmp_path: Path) -> 
     assert assistant["attributes"]["lattice.capability"] == "preprint"
     assert "checked the pdf" in assistant["attributes"]["output.value"]
     assert assistant["start_time_unix_nano"] == 1_700_000_001_000_000_000
+    assert assistant["attributes"]["semantica.category"] == "preprint"
+    assert assistant["attributes"]["semantica.scenario"] == "Read arXiv 2510.18032"
+    assert assistant["attributes"]["semantica.reasoning"] == "checked the pdf"
+    assert assistant["attributes"]["semantica.outcome"] == "Filed the wiki note."
+    assert assistant["attributes"]["semantica.caller_project"] == "hermes"
+    assert assistant["attributes"]["semantica.caller_agent"] == "agent-rtc"
+    assert assistant["attributes"]["semantica.run_id"] == "agent-rtc-4fcf"
+    assert assistant["attributes"]["semantica.tx_id"] == "2"
+    assert assistant["attributes"]["semantica.entities"] == "2510.18032"
+    assert "semantica.confidence" not in assistant["attributes"]
+    assert "semantica.caused_by" not in assistant["attributes"]
     assert "output.value" not in assistant["resource"]

@@ -19,12 +19,18 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
-from optagent.phoenix_spans import make_span, session_id, write_jsonl
+from optagent.phoenix_spans import make_span, session_id, trace_id_for, write_jsonl
 from optagent.snapshot import load_bundled
 
 
 _PREPRINT = re.compile(r"arxiv|biorxiv|medrxiv|wiki:", re.IGNORECASE)
+_ARXIV = re.compile(r"(\d{4}\.\d{4,5})", re.IGNORECASE)
 _TEXT_CAP = 32_000
+# Semantica record_decision limits. The full turn stays in input.value and
+# output.value. These clips are the fields a later record_decision accepts.
+_SCENARIO_CAP = 5_000
+_REASONING_CAP = 10_000
+_OUTCOME_CAP = 1_000
 
 
 def _clip(text: str) -> str:
@@ -223,6 +229,7 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
             """
         ).fetchall()
         previous: dict[str, str] = {}
+        previous_decision: dict[str, str] = {}
         latest = 0.0
         for session in sessions:
             raw_id = str(session["id"])
@@ -262,6 +269,38 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
                 else:
                     incoming, outgoing, kind = title or role, content, "TOOL"
                 name = title or (content.splitlines()[0][:120] if content else role)
+                trace_key = f"{raw_id}:{message['id']}"
+                attributes = {
+                    "hermes.session": raw_id,
+                    "hermes.source": source,
+                    "llm.model_name": model,
+                    "llm.token_count.total": int(message["token_count"] or 0),
+                }
+                if role == "assistant":
+                    # Shape Semantica can record later. Confidence is omitted:
+                    # Hermes does not store one, and a default would be invented.
+                    decision_id = trace_id_for("hermes", trace_key)
+                    entities = []
+                    for token in _ARXIV.findall(f"{title}\n{incoming}\n{content}"):
+                        if token not in entities:
+                            entities.append(token)
+                    attributes.update(
+                        {
+                            "semantica.category": ("preprint" if preprint else source)[:100],
+                            "semantica.scenario": _clip(incoming)[:_SCENARIO_CAP],
+                            "semantica.reasoning": reasoning[:_REASONING_CAP],
+                            "semantica.outcome": _clip(content)[:_OUTCOME_CAP],
+                            "semantica.decision_maker": (model or source)[:200],
+                            "semantica.caller_project": "hermes",
+                            "semantica.caller_agent": source[:200],
+                            "semantica.run_id": raw_id,
+                            "semantica.tx_id": str(message["id"]),
+                            "semantica.caused_by": previous_decision.get(raw_id, ""),
+                            "semantica.relationship": "CAUSED" if previous_decision.get(raw_id) else "",
+                            "semantica.entities": ",".join(entities[:8]),
+                        }
+                    )
+                    previous_decision[raw_id] = decision_id
                 spans.append(
                     make_span(
                         project="hermes",
@@ -270,17 +309,12 @@ def hermes_spans(db_path: str) -> tuple[list[dict], dict]:
                         activity=activity,
                         capability="preprint" if preprint else "conversation",
                         service_name="hermes" if source != "agent-rtc" else "agent-rtc",
-                        trace_key=f"{raw_id}:{message['id']}",
+                        trace_key=trace_key,
                         start_time_unix_nano=_unix_ns(stamp or session["started_at"]),
                         input_value=incoming,
                         output_value=outgoing,
                         span_kind=kind,
-                        attributes={
-                            "hermes.session": raw_id,
-                            "hermes.source": source,
-                            "llm.model_name": model,
-                            "llm.token_count.total": int(message["token_count"] or 0),
-                        },
+                        attributes=attributes,
                     )
                 )
         if latest:

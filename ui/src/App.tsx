@@ -997,7 +997,7 @@ function SpanSessions({ doc, onRefresh }: { doc: SessionsDoc; onRefresh: () => v
             <header className="sum-panel-head">
               <h2>{detail?.name || "Trace"}</h2>
               <span className="muted sum-panel-meta">
-                {[formatStamp(detail?.t || 0), detail?.span_kind, detail?.activity, detail?.attributes?.["llm.model_name"], detail?.attributes?.["llm.token_count.total"]]
+                {[formatStamp(detail?.t || 0), detail?.span_kind, detail?.activity, detail?.attributes?.["semantica.category"], detail?.attributes?.["semantica.relationship"], detail?.attributes?.["llm.model_name"], detail?.attributes?.["llm.token_count.total"]]
                   .filter((part) => part !== undefined && part !== "")
                   .join(" · ")}
               </span>
