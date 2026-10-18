@@ -81,22 +81,53 @@ def test_admission_records_genus_without_inventing_an_iri() -> None:
         trace_key="t",
         output_value="The specimen is accessioned.",
     )
+    text = span["attributes"]["output.value"]
     scan = {
         "n_admitted": 1,
         "items": [
             {"admitted": False, "span": [0, 4], "code": "", "genus_margin": 0.01},
-            {"admitted": True, "span": [4, 20], "code": "16.2", "label": "LIMS", "genus_margin": 0.22},
+            {
+                "admitted": True,
+                "span": [4, 12],
+                "code": "16.2",
+                "label": "LIMS",
+                "iri": "https://signals.zndx.org/sdg#LIMS",
+                "genus_margin": 0.22,
+            },
         ],
     }
-    assert apply_admission(span, scan, augmented_at_ms=1_700_000_100_000) is True
+    assert apply_admission(span, scan, augmented_at_ms=1_700_000_100_000, text=text) is True
     attributes = span["attributes"]
     assert attributes["aegir.genus_code"] == "16.2"
     assert attributes["aegir.genus_label"] == "LIMS"
+    assert attributes["aegir.genus_iri"] == "https://signals.zndx.org/sdg#LIMS"
     assert attributes["aegir.tau"] == 0.10
     assert attributes["sdg.augmented_at"] == 1_700_000_100_000
-    assert "sdg.iri" not in attributes
-    assert "sdg.spans" not in attributes
+    assert attributes["sdg.spans"] == [
+        {
+            "start": 4,
+            "end": 12,
+            "text": text[4:12],
+            "iri": "https://signals.zndx.org/sdg#LIMS",
+            "label": "LIMS",
+        }
+    ]
     assert "semantica.confidence" not in attributes
+    bare = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:1",
+        name="turn",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="bare",
+        output_value=text,
+    )
+    refused = {
+        "items": [{"admitted": True, "span": [0, 4], "code": "18.3.2", "label": "Data Lineage and Provenance", "genus_margin": 0.2}]
+    }
+    assert apply_admission(bare, refused, augmented_at_ms=1, text=text) is True
+    assert "sdg.spans" not in bare["attributes"]
 
 
 def test_backfill_window_leaves_older_spans_unchanged(tmp_path: Path) -> None:

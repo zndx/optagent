@@ -18,6 +18,7 @@ from pathlib import Path
 from optagent.phoenix_spans import read_jsonl, write_jsonl
 
 TAU = 0.10
+SDG_IRI = "https://signals.zndx.org/sdg#"
 
 
 def parse_time(value: str, *, default_ms: int) -> int:
@@ -36,49 +37,100 @@ def span_ms(span: dict) -> int:
     return int(span.get("start_time_unix_nano") or 0) // 1_000_000
 
 
-def apply_admission(span: dict, scan: dict, *, augmented_at_ms: int, tau: float = TAU) -> bool:
+def _window(item: dict) -> tuple[int, int]:
+    span = item.get("span") or [0, 0]
+    return int(span[0] or 0), int(span[1] or 0)
+
+
+def link_admissions(span: dict, scan: dict, text: str) -> bool:
+    """Copy admitted windows onto the same string the aperture scored.
+
+    The IRI is the concept the aperture returned. A hit without that IRI
+    does not become a link.
+    """
+
+    attributes = span.setdefault("attributes", {})
+    if attributes.get("sdg.spans"):
+        return False
+    links = []
+    for item in (scan or {}).get("items") or []:
+        if not item.get("admitted"):
+            continue
+        iri = str(item.get("iri") or "").strip()
+        if not iri.startswith(SDG_IRI):
+            continue
+        start, end = _window(item)
+        if end <= start or start < 0 or end > len(text):
+            continue
+        links.append(
+            {
+                "start": start,
+                "end": end,
+                "text": text[start:end],
+                "iri": iri,
+                "label": str(item.get("label") or ""),
+            }
+        )
+    if not links:
+        return False
+    attributes["sdg.spans"] = links
+    best = max(
+        (item for item in (scan or {}).get("items") or [] if item.get("admitted") and str(item.get("iri") or "").startswith(SDG_IRI)),
+        key=lambda item: float(item.get("genus_margin") or 0),
+    )
+    if not attributes.get("aegir.genus_iri"):
+        attributes["aegir.genus_iri"] = str(best.get("iri") or "")
+    return True
+
+
+def apply_admission(span: dict, scan: dict, *, augmented_at_ms: int, tau: float = TAU, text: str = "") -> bool:
     """Stamp the highest-margin admitted genus. Return whether a genus was recorded.
 
-    Leaf IRIs are not assigned here. A declined or root-only scan leaves the
-    span unchanged.
+    A declined or root-only scan leaves the span unchanged. The link uses the
+    aperture's concept IRI and the character window it scored.
     """
 
     items = [item for item in (scan or {}).get("items") or [] if item.get("admitted") and item.get("code")]
     if not items:
         return False
     chosen = max(items, key=lambda item: float(item.get("genus_margin") or 0))
-    start, end = (chosen.get("span") or [0, 0])[:2]
+    start, end = _window(chosen)
     attributes = span.setdefault("attributes", {})
-    if attributes.get("aegir.genus_code"):
-        return False
-    attributes["aegir.genus_code"] = str(chosen.get("code") or "")
-    label = str(chosen.get("label") or "")
-    if label:
-        attributes["aegir.genus_label"] = label
-    attributes["aegir.genus_start"] = int(start or 0)
-    attributes["aegir.genus_end"] = int(end or 0)
-    attributes["aegir.rel_margin_h"] = float(chosen.get("genus_margin") or 0)
-    attributes["aegir.tau"] = tau
-    attributes["sdg.augmented_at"] = int(augmented_at_ms)
-    attributes["aegir.admissions"] = [
-        {
-            "start": int((item.get("span") or [0, 0])[0] or 0),
-            "end": int((item.get("span") or [0, 0])[1] or 0),
-            "code": str(item.get("code") or ""),
-            "label": str(item.get("label") or ""),
-            "rel_margin_h": float(item.get("genus_margin") or 0),
-        }
-        for item in items
-    ]
-    return True
+    fresh = not attributes.get("aegir.genus_code")
+    if fresh:
+        attributes["aegir.genus_code"] = str(chosen.get("code") or "")
+        label = str(chosen.get("label") or "")
+        if label:
+            attributes["aegir.genus_label"] = label
+        attributes["aegir.genus_start"] = start
+        attributes["aegir.genus_end"] = end
+        attributes["aegir.rel_margin_h"] = float(chosen.get("genus_margin") or 0)
+        attributes["aegir.tau"] = tau
+        attributes["sdg.augmented_at"] = int(augmented_at_ms)
+        attributes["aegir.admissions"] = [
+            {
+                "start": _window(item)[0],
+                "end": _window(item)[1],
+                "code": str(item.get("code") or ""),
+                "label": str(item.get("label") or ""),
+                "iri": str(item.get("iri") or ""),
+                "rel_margin_h": float(item.get("genus_margin") or 0),
+            }
+            for item in items
+        ]
+    linked = link_admissions(span, scan, text) if text else False
+    return fresh or linked
 
 
 def span_text(span: dict) -> str:
+    """The exact string whose offsets the aperture will use. Not a stripped copy."""
+
     attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
-    output = str(attributes.get("output.value") or "").strip()
-    if output:
+    output = attributes.get("output.value")
+    if isinstance(output, str) and output.strip():
         return output
-    return str(attributes.get("input.value") or "").strip()
+    incoming = attributes.get("input.value")
+    return incoming if isinstance(incoming, str) else ""
 
 
 def backfill_tree(
@@ -89,6 +141,7 @@ def backfill_tree(
     admit,
     augmented_at_ms: int,
     minimum_chars: int = 40,
+    links_only: bool = False,
 ) -> dict:
     """Admit genera on spans inside ``[since_ms, until_ms]``. Other spans stay as harvested."""
 
@@ -109,10 +162,15 @@ def backfill_tree(
             if stamp < since_ms or stamp > until_ms:
                 continue
             attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
-            if attributes.get("aegir.genus_code"):
+            if attributes.get("sdg.spans"):
+                continue
+            already = bool(attributes.get("aegir.genus_code"))
+            if links_only and not already:
                 continue
             text = span_text(span)
-            if len(text) < minimum_chars:
+            if not already and len(text.strip()) < minimum_chars:
+                continue
+            if not text:
                 continue
             examined += 1
             if examined == 1 or examined % 25 == 0:
@@ -122,7 +180,7 @@ def backfill_tree(
             except Exception:
                 errors += 1
                 continue
-            if apply_admission(span, scan, augmented_at_ms=augmented_at_ms):
+            if apply_admission(span, scan, augmented_at_ms=augmented_at_ms, text=text):
                 admitted += 1
                 changed = True
         if changed:
@@ -154,7 +212,7 @@ def aperture_admit(text: str) -> dict:
     return item_scan(text, tau=TAU)
 
 
-def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = False) -> dict:
+def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = False, links_only: bool = False) -> dict:
     """Backfill one snapshot directory. Empty ``since`` covers every span in it."""
 
     root = Path(snapshot)
@@ -167,6 +225,7 @@ def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = Fal
         until_ms=until_ms,
         admit=aperture_admit,
         augmented_at_ms=now_ms,
+        links_only=links_only,
     )
     if install:
         from optagent.snapshot_store import install_archive

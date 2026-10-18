@@ -525,12 +525,17 @@ def session_items(spans: list[dict], project: str) -> list[dict]:
         sid = str(attributes.get("session.id") or "")
         if not sid:
             continue
+        output = attributes.get("output.value") or ""
+        incoming = attributes.get("input.value") or ""
+        # The aperture scores output when it exists, otherwise the input.
+        # The link offsets belong to that same string.
+        body = output if str(output).strip() else incoming
         grouped.setdefault(sid, []).append(
             {
                 "name": span.get("name") or "",
-                "output": attributes.get("output.value") or "",
+                "output": body,
                 "rich": rich_segments(
-                    str(attributes.get("output.value") or ""),
+                    str(body),
                     attributes.get("sdg.spans") if isinstance(attributes.get("sdg.spans"), list) else [],
                 ),
                 "generated_at": _generated_ms(span),
@@ -540,8 +545,12 @@ def session_items(spans: list[dict], project: str) -> list[dict]:
     items = []
     for sid in sorted(grouped):
         rows = grouped[sid]
-        rows.sort(key=lambda item: item["generated_at"])
-        items.append({"id": sid, "traces": len(rows), "items": rows[:40]})
+        linked = [row for row in rows if any(part.get("iri") for part in row["rich"])]
+        others = [row for row in rows if not any(part.get("iri") for part in row["rich"])]
+        others.sort(key=lambda item: item["generated_at"], reverse=True)
+        shown = (linked + others)[:40]
+        shown.sort(key=lambda item: item["generated_at"])
+        items.append({"id": sid, "traces": len(rows), "items": shown})
     return items
 
 
