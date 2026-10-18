@@ -42,7 +42,23 @@ def _window(item: dict) -> tuple[int, int]:
     return int(span[0] or 0), int(span[1] or 0)
 
 
-def link_admissions(span: dict, scan: dict, text: str) -> bool:
+def readable_segment(text: str) -> bool:
+    """A wiki link needs a sentence, not a file dump or a JSON blob."""
+
+    sample = (text or "").strip()
+    if len(sample) < 40:
+        return False
+    head = sample[:800]
+    if head[:1] in "{[|`":
+        return False
+    letters = sum(ch.isalpha() for ch in head)
+    if letters / len(head) < 0.55:
+        return False
+    words = [word for word in head.split() if word.isalpha() and len(word) > 2]
+    return len(words) >= 8
+
+
+def link_admissions(span: dict, scan: dict, text: str, *, published: set[str] | None = None) -> bool:
     """Copy admitted windows onto the same string the aperture scored.
 
     The IRI is the concept the aperture returned. A hit without that IRI
@@ -59,8 +75,13 @@ def link_admissions(span: dict, scan: dict, text: str) -> bool:
         iri = str(item.get("iri") or "").strip()
         if not iri.startswith(SDG_IRI):
             continue
+        if published is not None and iri not in published:
+            continue
         start, end = _window(item)
         if end <= start or start < 0 or end > len(text):
+            continue
+        excerpt = text[start:end]
+        if not readable_segment(excerpt):
             continue
         links.append(
             {
@@ -83,7 +104,15 @@ def link_admissions(span: dict, scan: dict, text: str) -> bool:
     return True
 
 
-def apply_admission(span: dict, scan: dict, *, augmented_at_ms: int, tau: float = TAU, text: str = "") -> bool:
+def apply_admission(
+    span: dict,
+    scan: dict,
+    *,
+    augmented_at_ms: int,
+    tau: float = TAU,
+    text: str = "",
+    published: set[str] | None = None,
+) -> bool:
     """Stamp the highest-margin admitted genus. Return whether a genus was recorded.
 
     A declined or root-only scan leaves the span unchanged. The link uses the
@@ -118,7 +147,7 @@ def apply_admission(span: dict, scan: dict, *, augmented_at_ms: int, tau: float 
             }
             for item in items
         ]
-    linked = link_admissions(span, scan, text) if text else False
+    linked = link_admissions(span, scan, text, published=published) if text else False
     return fresh or linked
 
 
@@ -142,6 +171,7 @@ def backfill_tree(
     augmented_at_ms: int,
     minimum_chars: int = 40,
     links_only: bool = False,
+    published: set[str] | None = None,
 ) -> dict:
     """Admit genera on spans inside ``[since_ms, until_ms]``. Other spans stay as harvested."""
 
@@ -180,7 +210,7 @@ def backfill_tree(
             except Exception:
                 errors += 1
                 continue
-            if apply_admission(span, scan, augmented_at_ms=augmented_at_ms, text=text):
+            if apply_admission(span, scan, augmented_at_ms=augmented_at_ms, text=text, published=published):
                 admitted += 1
                 changed = True
         if changed:
@@ -219,6 +249,9 @@ def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = Fal
     now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     since_ms = None if not (since or "").strip() else parse_time(since, default_ms=0)
     until_ms = None if not (until or "").strip() else parse_time(until, default_ms=now_ms)
+    from optagent.lineup import corpora_root, load_lexicon
+
+    published = {item["iri"] for item in load_lexicon(corpora_root())} or None
     result = backfill_tree(
         root,
         since_ms=since_ms,
@@ -226,6 +259,7 @@ def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = Fal
         admit=aperture_admit,
         augmented_at_ms=now_ms,
         links_only=links_only,
+        published=published,
     )
     if install:
         from optagent.snapshot_store import install_archive

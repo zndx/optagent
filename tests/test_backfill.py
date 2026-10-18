@@ -79,7 +79,7 @@ def test_admission_records_genus_without_inventing_an_iri() -> None:
         capability="conversation",
         service_name="agent-rtc",
         trace_key="t",
-        output_value="The specimen is accessioned.",
+        output_value="The specimen is accessioned and the assay is run in the laboratory.",
     )
     text = span["attributes"]["output.value"]
     scan = {
@@ -88,7 +88,7 @@ def test_admission_records_genus_without_inventing_an_iri() -> None:
             {"admitted": False, "span": [0, 4], "code": "", "genus_margin": 0.01},
             {
                 "admitted": True,
-                "span": [4, 12],
+                "span": [0, len(text)],
                 "code": "16.2",
                 "label": "LIMS",
                 "iri": "https://signals.zndx.org/sdg#LIMS",
@@ -105,13 +105,40 @@ def test_admission_records_genus_without_inventing_an_iri() -> None:
     assert attributes["sdg.augmented_at"] == 1_700_000_100_000
     assert attributes["sdg.spans"] == [
         {
-            "start": 4,
-            "end": 12,
-            "text": text[4:12],
+            "start": 0,
+            "end": len(text),
+            "text": text,
             "iri": "https://signals.zndx.org/sdg#LIMS",
             "label": "LIMS",
         }
     ]
+    dumped = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:1",
+        name="dump",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="dump",
+        output_value='{"content": "1|--- title: OptAgent wiki note with many tokens and fields"}',
+    )
+    dump_text = dumped["attributes"]["output.value"]
+    assert apply_admission(
+        dumped,
+        {
+            "items": [{
+                "admitted": True,
+                "span": [0, len(dump_text)],
+                "code": "18.1",
+                "label": "Model-Based Systems Engineering",
+                "iri": "https://signals.zndx.org/sdg#MBSE",
+                "genus_margin": 0.13,
+            }]
+        },
+        augmented_at_ms=1,
+        text=dump_text,
+    ) is True
+    assert "sdg.spans" not in dumped["attributes"]
     assert "semantica.confidence" not in attributes
     bare = make_span(
         project="hermes",
