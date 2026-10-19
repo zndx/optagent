@@ -57,7 +57,9 @@ class ModelEndpoint:
     """One OpenAI-compatible endpoint for the Grok Build harness.
 
     ``api_key_env`` names the variable that holds the key. The key itself
-    is never stored on the endpoint.
+    is never stored on the endpoint. ``optional`` endpoints stay out of the
+    session until ``OPTAGENT_MODEL`` names them. ``label_env`` names a
+    non-secret identifier, such as a Mistral Studio workspace id.
     """
 
     id: str
@@ -65,6 +67,20 @@ class ModelEndpoint:
     base_url: str
     api_key_env: str
     backend: str
+    optional: bool = False
+    label_env: str = ""
+    headers: tuple[tuple[str, str], ...] = ()
+
+
+_LOCAL_DOTENV_KEYS = frozenset(
+    {
+        "MISTRAL_API_KEY",
+        "MISTRAL_MODEL",
+        "MISTRAL_WORKSPACE_API_KEY",
+        "MISTRAL_WORKSPACE_ID",
+        "MISTRAL_WORKSPACE_MODEL",
+    }
+)
 
 
 def _toml_string(value: str) -> str:
@@ -78,6 +94,41 @@ def _check_base_url(value: str) -> str:
     if parsed.username or parsed.password:
         raise ValueError("put the API key in the named environment variable, not in the model URL")
     return value.strip().rstrip("/")
+
+
+def _env_name(value: str, label: str) -> str:
+    text = value.strip()
+    if text and not _MODEL_ID.match(text):
+        raise ValueError(f"{label} {text!r} is not an environment variable name")
+    return text
+
+
+def _flag(value: object) -> bool:
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes"}
+
+
+def _headers(raw: object) -> tuple[tuple[str, str], ...]:
+    if not raw:
+        return ()
+    pairs: list[tuple[str, str]] = []
+    items = raw.items() if isinstance(raw, dict) else raw
+    for item in items:
+        if isinstance(raw, dict):
+            name, env_name = item
+        elif isinstance(item, dict):
+            name, env_name = item.get("name", ""), item.get("env", "")
+        else:
+            raise ValueError("model headers must map a header name to an environment variable")
+        header = str(name).strip()
+        env_key = _env_name(str(env_name), "header env")
+        if not header or not env_key:
+            raise ValueError("a model header needs a name and an environment variable")
+        if any(char in header for char in "\r\n\""):
+            raise ValueError(f"header name {header!r} is not allowed")
+        pairs.append((header, env_key))
+    return tuple(pairs)
 
 
 def _endpoint(raw: dict, *, fallback_id: str = "optagent") -> ModelEndpoint:
@@ -95,10 +146,18 @@ def _endpoint(raw: dict, *, fallback_id: str = "optagent") -> ModelEndpoint:
     base_url = str(raw.get("base_url") or "").strip()
     if base_url:
         base_url = _check_base_url(base_url)
-    api_key_env = str(raw.get("api_key_env") or "OPTAGENT_MODEL_API_KEY").strip()
-    if api_key_env and not _MODEL_ID.match(api_key_env):
-        raise ValueError(f"api_key_env {api_key_env!r} is not an environment variable name")
-    return ModelEndpoint(ident, model, base_url, api_key_env, backend)
+    api_key_env = _env_name(str(raw.get("api_key_env") or "OPTAGENT_MODEL_API_KEY"), "api_key_env")
+    label_env = _env_name(str(raw.get("label_env") or ""), "label_env")
+    return ModelEndpoint(
+        ident,
+        model,
+        base_url,
+        api_key_env,
+        backend,
+        optional=_flag(raw.get("optional", False)),
+        label_env=label_env,
+        headers=_headers(raw.get("headers") or raw.get("env_http_headers") or ()),
+    )
 
 
 def _hocon_models() -> tuple[str, list[ModelEndpoint]]:
@@ -114,7 +173,16 @@ def _hocon_models() -> tuple[str, list[ModelEndpoint]]:
     selected = str(block.get("model", "") or "").strip()
     items = []
     for raw in block.get("models", []) or []:
-        data = {key: raw.get(key, "") for key in ("id", "model", "base_url", "api_key_env", "backend")}
+        data = {
+            "id": raw.get("id", ""),
+            "model": raw.get("model", ""),
+            "base_url": raw.get("base_url", ""),
+            "api_key_env": raw.get("api_key_env", ""),
+            "backend": raw.get("backend", ""),
+            "optional": raw.get("optional", False),
+            "label_env": raw.get("label_env", ""),
+            "headers": raw.get("headers", None),
+        }
         items.append(_endpoint(data))
     return selected, items
 
@@ -127,6 +195,24 @@ def _json_models(raw: str) -> list[ModelEndpoint]:
     if not isinstance(parsed, list) or not parsed:
         raise ValueError("OPTAGENT_MODELS_JSON must be a non-empty list")
     return [_endpoint(item) for item in parsed]
+
+
+def _local_dotenv_values() -> dict[str, str]:
+    """Keys from ``~/local/.env`` that the process does not already have.
+
+    The AMP has no such file. Its project environment supplies the same names.
+    """
+
+    path = Path.home() / "local" / ".env"
+    if not path.is_file():
+        return {}
+    from optagent.secrets import apply_dotenv
+
+    found: dict[str, str] = {}
+    for key, value in apply_dotenv(path.read_text(encoding="utf-8")).items():
+        if key in _LOCAL_DOTENV_KEYS and value and not os.environ.get(key, "").strip():
+            found[key] = value
+    return found
 
 
 def resolve_model() -> ModelEndpoint | None:
@@ -172,11 +258,12 @@ def resolve_model() -> ModelEndpoint | None:
             known = ", ".join(item.id for item in items) or "(none)"
             raise ValueError(f"OPTAGENT_MODEL {selected} is not a configured endpoint ({known})")
         return match if match.base_url else None
-    filled = [item for item in items if item.base_url]
-    if len(filled) == 1:
-        return filled[0]
-    if len(filled) > 1:
-        names = ", ".join(item.id for item in filled)
+    # Optional endpoints (Mistral, Mistral Studio) wait until they are named.
+    required = [item for item in items if item.base_url and not item.optional]
+    if len(required) == 1:
+        return required[0]
+    if len(required) > 1:
+        names = ", ".join(item.id for item in required)
         raise ValueError(f"set OPTAGENT_MODEL to one of: {names}")
     return None
 
@@ -184,8 +271,7 @@ def resolve_model() -> ModelEndpoint | None:
 def _write_model_home(home: Path, endpoint: ModelEndpoint) -> Path:
     grok_home = home / "grok-home"
     grok_home.mkdir(parents=True, exist_ok=True)
-    config = "\n".join(
-        [
+    config = [
             "[models]",
             f"default = {_toml_string(endpoint.id)}",
             "",
@@ -197,10 +283,13 @@ def _write_model_home(home: Path, endpoint: ModelEndpoint) -> Path:
             f"env_key = {_toml_string(endpoint.api_key_env)}",
             "context_window = 262144",
             "max_completion_tokens = 8192",
-            "",
         ]
-    )
-    (grok_home / "config.toml").write_text(config, encoding="utf-8")
+    if endpoint.headers:
+        pairs = ", ".join(f"{_toml_string(name)} = {_toml_string(env_name)}" for name, env_name in endpoint.headers)
+        config.append(f"env_http_headers = {{ {pairs} }}")
+    config.append("")
+    text = "\n".join(config)
+    (grok_home / "config.toml").write_text(text, encoding="utf-8")
     return grok_home
 
 
@@ -315,8 +404,18 @@ class TerminalSession:
             child_env["GROK_HOME"] = str(grok_home)
             self.model_id = endpoint.id
             notes.append(endpoint.id)
-            if endpoint.api_key_env and not os.environ.get(endpoint.api_key_env, "").strip():
+            local_values = _local_dotenv_values()
+            for key in (endpoint.api_key_env, endpoint.label_env, *(env_name for _name, env_name in endpoint.headers)):
+                if key and not child_env.get(key, "").strip() and local_values.get(key):
+                    child_env[key] = local_values[key]
+            if endpoint.api_key_env and not child_env.get(endpoint.api_key_env, "").strip():
                 notes.append(f"{endpoint.api_key_env} is unset")
+            if endpoint.label_env:
+                label = child_env.get(endpoint.label_env, "").strip()
+                if label and len(label) <= 80 and "\n" not in label:
+                    notes.append(f"workspace {label}")
+                elif not label:
+                    notes.append(f"{endpoint.label_env} is unset")
             self._append(f"model {endpoint.id} → {endpoint.base_url}\r\n".encode())
         if shutil.which("bwrap"):
             cmd.extend(["--sandbox", "workspace"])

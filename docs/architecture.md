@@ -28,7 +28,7 @@ OptAgent builds and serves a snapshot with this repository alone. Signals at `~/
 
 `just corpora` runs `git submodule update --init corpora`. `OPTAGENT_SDG_CORPORA` selects another vocabulary tree. Aperture admission is optional: set `AEGIR_ROOT` so that checkout is on `PYTHONPATH`, and `AEGIR_PYTHON` when that tree's interpreter has to run the encoder. HX export runs only when `OPTAGENT_GAIUS_PYTHON` names an interpreter. Semantica harvest runs only when `SEMANTICA_DATABASE_URL` is set. Harvest writes under `build/signals-snapshot` unless `OPTAGENT_HARVEST_OUT` is set.
 
-The terminal harness is Grok Build. The model endpoint is `terminal.models` in `config/base.conf`, overridden by `OPTAGENT_MODEL_BASE_URL` or replaced by `OPTAGENT_MODELS_JSON`. An empty base URL keeps Grok's built-in catalog. The same variables are in the AMP runbook. The API key stays in the variable named by `OPTAGENT_MODEL_API_KEY_ENV` (default `OPTAGENT_MODEL_API_KEY`). A new session picks up a changed endpoint.
+The terminal harness is Grok Build. The model endpoint is `terminal.models` in `config/base.conf`, overridden by `OPTAGENT_MODEL_BASE_URL` or replaced by `OPTAGENT_MODELS_JSON`. An empty selection keeps Grok's built-in catalog. `OPTAGENT_MODEL=mistral` uses `https://api.mistral.ai/v1` with `MISTRAL_API_KEY`. `OPTAGENT_MODEL=mistral-studio` uses the same API with the workspace-scoped `MISTRAL_WORKSPACE_API_KEY` and shows `MISTRAL_WORKSPACE_ID`. On a workstation those values are read from the process environment or `~/local/.env` when unset. The AMP sets the same names in the project environment. Keys are not written into the session. A new session picks up a changed endpoint.
 
 ## Why the scripts look the way they do
 

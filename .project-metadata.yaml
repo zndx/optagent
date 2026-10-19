@@ -86,6 +86,26 @@ environment_variables:
     default: ""
     description: "JSON list of model endpoints. When set, it replaces terminal.models in config/base.conf. Select one with OPTAGENT_MODEL."
     required: false
+  MISTRAL_API_KEY:
+    default: ""
+    description: "API key for the mistral terminal endpoint (https://api.mistral.ai/v1). Select it with OPTAGENT_MODEL=mistral. Not written into the session."
+    required: false
+  MISTRAL_MODEL:
+    default: ""
+    description: "Model id for the plain Mistral endpoint. Empty uses mistral-small-latest."
+    required: false
+  MISTRAL_WORKSPACE_API_KEY:
+    default: ""
+    description: "Workspace-scoped API key for the Mistral Studio endpoint. Select it with OPTAGENT_MODEL=mistral-studio."
+    required: false
+  MISTRAL_WORKSPACE_ID:
+    default: ""
+    description: "Mistral Studio workspace id for the mistral-studio endpoint. An identifier, not the API key."
+    required: false
+  MISTRAL_WORKSPACE_MODEL:
+    default: ""
+    description: "Model id for the Mistral Studio workspace endpoint. Empty uses mistral-small-latest."
+    required: false
   IMPALA_HS2_HOST:
     default: ""
     description: "Impala HS2 host. Empty skips CREATE SERVER. Product auth is Kerberos."

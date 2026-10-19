@@ -150,6 +150,49 @@ def test_an_unknown_model_does_not_spawn(monkeypatch, tmp_path) -> None:
     assert terminal_host.get_session(created["id"])._proc is None
 
 
+def test_mistral_endpoints_wait_until_they_are_named(monkeypatch) -> None:
+    _reset()
+    monkeypatch.delenv("MISTRAL_MODEL", raising=False)
+    monkeypatch.delenv("MISTRAL_WORKSPACE_MODEL", raising=False)
+    assert terminal_host.resolve_model() is None
+    monkeypatch.setenv("OPTAGENT_MODEL", "mistral")
+    plain = terminal_host.resolve_model()
+    assert plain is not None
+    assert plain.base_url == "https://api.mistral.ai/v1"
+    assert plain.api_key_env == "MISTRAL_API_KEY"
+    assert plain.model == "mistral-small-latest"
+    monkeypatch.setenv("OPTAGENT_MODEL", "mistral-studio")
+    studio = terminal_host.resolve_model()
+    assert studio is not None
+    assert studio.api_key_env == "MISTRAL_WORKSPACE_API_KEY"
+    assert studio.label_env == "MISTRAL_WORKSPACE_ID"
+
+
+def test_mistral_studio_session_records_the_workspace_id_not_the_key(monkeypatch, tmp_path) -> None:
+    _reset()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv("OPTAGENT_MODEL", "mistral-studio")
+    monkeypatch.setenv("MISTRAL_WORKSPACE_API_KEY", "workspace-secret-value")
+    monkeypatch.setenv("MISTRAL_WORKSPACE_ID", "019b2bd7-96e7-7219-8c0b-45a73da50088")
+    monkeypatch.setattr("optagent.terminal_host._local_dotenv_values", lambda: {})
+    _fake_grok(tmp_path, monkeypatch)
+    session_id = "55555555-5555-4555-8555-555555555555"
+    created = create_session("current", session_id)
+    assert created["status"] == "host"
+    assert "019b2bd7-96e7-7219-8c0b-45a73da50088" in created["detail"]
+    assert "workspace-secret-value" not in created["detail"]
+    config = (tmp_path / "terminals" / session_id / "grok-home" / "config.toml").read_text(encoding="utf-8")
+    assert 'base_url = "https://api.mistral.ai/v1"' in config
+    assert 'env_key = "MISTRAL_WORKSPACE_API_KEY"' in config
+    assert "workspace-secret-value" not in config
+    assert "019b2bd7-96e7-7219-8c0b-45a73da50088" not in config
+    session = terminal_host.get_session(session_id)
+    assert session.child_env["MISTRAL_WORKSPACE_API_KEY"] == "workspace-secret-value"
+    assert session._proc is not None
+    session._proc.kill()
+    session._proc.wait(timeout=2)
+
+
 def test_a_key_in_the_model_url_is_rejected(monkeypatch, tmp_path) -> None:
     _reset()
     monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
