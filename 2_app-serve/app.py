@@ -980,6 +980,10 @@ def response_for(
 
 def make_handler() -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
+        # A buffered reader would pull the first websocket frame off the
+        # socket while it parsed the upgrade request.
+        rbufsize = 0
+
         def _send(self, method: str, payload: bytes = b"") -> None:
             status, content_type, body, extra = response_for(
                 method,

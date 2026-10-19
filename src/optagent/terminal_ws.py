@@ -14,6 +14,7 @@ import hashlib
 import json
 import queue
 import socket
+import threading
 from typing import Any
 
 _GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -67,37 +68,62 @@ def read_frame(sock: socket.socket) -> tuple[int, bytes]:
 def session_loop(sock: socket.socket, session_id: str, section: str) -> None:
     """Attach to the server harness. Return when the browser disconnects."""
 
-    from optagent.terminal_host import open_session
+    from optagent.terminal_host import get_session, open_session
 
     try:
-        session = open_session(section, session_id)
-    except ValueError:
+        sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    except OSError:
+        pass
+    try:
+        # The HTTP API returns the public dict. The socket needs the live session.
+        public = open_session(section, session_id)
+        session = get_session(str(public["id"]))
+    except (ValueError, KeyError):
         return
     snap, box = session.listen()
+    send_lock = threading.Lock()
+    stop = threading.Event()
+
+    def pump() -> None:
+        while not stop.is_set():
+            try:
+                chunk = box.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            try:
+                with send_lock:
+                    _send_json(sock, {"type": "text", "data": chunk.decode("utf-8", "replace")})
+            except OSError:
+                stop.set()
+                return
+
+    pump_thread = threading.Thread(target=pump, name=f"optagent-ws-{session.id[:8]}", daemon=True)
     try:
-        _send_json(sock, {"type": "status", "data": session.public()["status"]})
-        if snap:
-            _send_json(sock, {"type": "text", "data": snap.decode("utf-8", "replace"), "replay": True})
-        sock.settimeout(0.25)
-        while True:
+        with send_lock:
+            _send_json(sock, {"type": "status", "data": session.public()["status"]})
+            if snap:
+                _send_json(sock, {"type": "text", "data": snap.decode("utf-8", "replace"), "replay": True})
+        pump_thread.start()
+        while not stop.is_set():
             try:
                 opcode, payload = read_frame(sock)
-            except TimeoutError:
-                opcode, payload = 0, b""
-            except (ConnectionError, OSError, TimeoutError):
+            except (ConnectionError, OSError):
                 break
             if opcode == 8:
                 break
             if opcode == 9:
                 try:
-                    sock.sendall(encode_frame(10, payload))
+                    with send_lock:
+                        sock.sendall(encode_frame(10, payload))
                 except OSError:
                     break
             elif opcode == 1 and payload:
                 _handle_client(session, payload)
-            _drain(sock, box)
     finally:
+        stop.set()
         session.unlisten(box)
+        if pump_thread.is_alive():
+            pump_thread.join(timeout=1)
 
 
 def _handle_client(session: Any, payload: bytes) -> None:
@@ -115,15 +141,6 @@ def _handle_client(session: Any, payload: bytes) -> None:
             session.resize(int(message.get("cols") or 80), int(message.get("rows") or 24))
         except (TypeError, ValueError):
             return
-
-
-def _drain(sock: socket.socket, box: queue.Queue[bytes]) -> None:
-    while True:
-        try:
-            chunk = box.get_nowait()
-        except queue.Empty:
-            return
-        _send_json(sock, {"type": "text", "data": chunk.decode("utf-8", "replace")})
 
 
 def _send_json(sock: socket.socket, message: dict) -> None:
