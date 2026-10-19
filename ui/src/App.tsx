@@ -2578,15 +2578,48 @@ function Summary({
 
 type TermSession = { id: string; section: string; status: string; detail: string; created: number };
 
+function terminalStorageKey(section: string): string {
+  return `optagent-terminal-session:${section}`;
+}
+
+function rememberSession(section: string): string {
+  const key = terminalStorageKey(section);
+  const stored = localStorage.getItem(key);
+  if (stored) return stored;
+  const id = crypto.randomUUID();
+  localStorage.setItem(key, id);
+  return id;
+}
+
 function Terminal() {
   const [section, setSection] = useState("current");
   const [sessions, setSessions] = useState<TermSession[]>([]);
   const [active, setActive] = useState("");
-  const [status, setStatus] = useState("No server session");
+  const [status, setStatus] = useState("connecting…");
   const [ask, setAsk] = useState("");
   const [chart, setChart] = useState<number[]>([]);
   const cursor = useRef(0);
   const host = useRef<HTMLDivElement>(null);
+
+  const attach = useCallback((id: string, target: string) => {
+    localStorage.setItem(terminalStorageKey(target), id);
+    setStatus("connecting…");
+    return fetch("/api/optagent/v1/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ section: target, id }),
+    })
+      .then((response) => response.json())
+      .then((row: TermSession & { error?: string }) => {
+        if (!row.id) {
+          setStatus(row.error || "Could not open a server session");
+          return;
+        }
+        setActive(row.id);
+        setStatus(row.detail ? `${row.status} — ${row.detail}` : row.status);
+      })
+      .catch(() => setStatus("Could not open a server session"));
+  }, []);
 
   const refresh = useCallback(() => {
     fetch(`/api/optagent/v1/terminal/sessions?section=${encodeURIComponent(section)}`)
@@ -2597,7 +2630,8 @@ function Terminal() {
 
   useEffect(() => {
     refresh();
-  }, [refresh]);
+    void attach(rememberSession(section), section);
+  }, [refresh, attach, section]);
 
   useEffect(() => {
     const node = host.current;
@@ -2606,6 +2640,7 @@ function Terminal() {
     let term: GhostTerm | null = null;
     let timer = 0;
     let stopped = false;
+    let observed: ResizeObserver | null = null;
     cursor.current = 0;
 
     function loadGhostty(): Promise<void> {
@@ -2634,13 +2669,27 @@ function Terminal() {
       }
       const created = new ghost.Terminal({
         ghostty: ghost.instance,
+        cursorBlink: true,
+        fontFamily: 'Menlo, Monaco, "Courier New", ui-monospace, monospace',
         fontSize: 13,
-        theme: { background: "#0d1117", foreground: "#c9d1d9" },
+        scrollback: 5000,
+        theme: { background: "#0d1117", foreground: "#c9d1d9", cursor: "#58a6ff" },
       });
-      const fit = new ghost.FitAddon();
+      const fit = new ghost.FitAddon() as { fit?: () => void };
       created.loadAddon(fit);
       created.open(node);
       term = created;
+      const sendSize = () => {
+        if (typeof fit.fit === "function") fit.fit();
+        fetch(`/api/optagent/v1/terminal/sessions/${active}/resize`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ cols: created.cols || 80, rows: created.rows || 24 }),
+        }).catch(() => undefined);
+      };
+      sendSize();
+      observed = new ResizeObserver(() => sendSize());
+      observed.observe(node);
       created.onData((data) => {
         fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
           method: "POST",
@@ -2648,11 +2697,6 @@ function Terminal() {
           body: JSON.stringify({ data }),
         }).catch(() => undefined);
       });
-      fetch(`/api/optagent/v1/terminal/sessions/${active}/resize`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ cols: created.cols || 80, rows: created.rows || 24 }),
-      }).catch(() => undefined);
       const pull = () => {
         if (stopped) return;
         fetch(`/api/optagent/v1/terminal/sessions/${active}/output?cursor=${cursor.current}`)
@@ -2680,24 +2724,15 @@ function Terminal() {
     });
     return () => {
       stopped = true;
+      observed?.disconnect();
       window.clearTimeout(timer);
       node.replaceChildren();
     };
   }, [active]);
 
   const openSession = () => {
-    fetch("/api/optagent/v1/terminal/sessions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ section }),
-    })
-      .then((response) => response.json())
-      .then((row: TermSession) => {
-        setActive(row.id);
-        setStatus(row.status);
-        refresh();
-      })
-      .catch(() => setStatus("Could not open a server session"));
+    const id = crypto.randomUUID();
+    void attach(id, section).then(() => refresh());
   };
 
   const askSend = () => {
@@ -2736,7 +2771,13 @@ function Terminal() {
           <ul className="sum-note-list">
             {sessions.map((row) => (
               <li key={row.id}>
-                <button type="button" className="sum-week-btn" onClick={() => setActive(row.id)}>
+                <button
+                  type="button"
+                  className="sum-week-btn"
+                  onClick={() => {
+                    void attach(row.id, section);
+                  }}
+                >
                   {row.id.slice(0, 8)}
                 </button>
                 <span className="muted"> {row.status}</span>

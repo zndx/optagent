@@ -3,15 +3,17 @@
 """Server-side terminal sessions for the AMP web tier.
 
 The PTY lives in the app process, the same place Atelier keeps its gateway
-terminal. The engine gRPC face stays Status-only. Ghostty in the browser is
-only the VT. ``grok`` is the host process, built by Gaius from
-``zndx/oss-grok-build``.
+terminal. A browser-owned session id is created on first open and reused
+after a reload. The engine gRPC face stays Status-only. Ghostty in the
+browser is only the VT, inside the Summary layout. ``grok`` runs inline
+in that pane (``--minimal --no-alt-screen``), not as a fullscreen TUI.
 """
 
 from __future__ import annotations
 
 import os
 import pty
+import re
 import shutil
 import subprocess
 import threading
@@ -20,6 +22,7 @@ import uuid
 from pathlib import Path
 
 SECTIONS = ("archive", "current", "scratch")
+_SESSION_ID = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
 _LOCK = threading.Lock()
 _SESSIONS: dict[str, "TerminalSession"] = {}
 
@@ -51,10 +54,17 @@ class TerminalSession:
         self.created = int(time.time() * 1000)
         self.status = "starting"
         self.detail = ""
+        self.command: list[str] = []
         self._chunks: bytearray = bytearray()
         self._master: int | None = None
         self._proc: subprocess.Popen | None = None
         self._lock = threading.Lock()
+        self._start_lock = threading.Lock()
+        self._generation = 0
+
+    def alive(self) -> bool:
+        proc = self._proc
+        return proc is not None and proc.poll() is None
 
     def public(self) -> dict:
         with self._lock:
@@ -99,6 +109,16 @@ class TerminalSession:
         with self._lock:
             self._chunks.extend(data)
 
+    def ensure(self) -> None:
+        """Start the PTY once. A second open of the same id reuses the child."""
+
+        with self._start_lock:
+            if self.alive():
+                return
+            if self.status == "grok-missing" and self._proc is None and self._chunks:
+                return
+            self.start()
+
     def start(self) -> None:
         binary = grok_bin()
         home = _root() / self.id
@@ -108,14 +128,27 @@ class TerminalSession:
             self.detail = "grok is not installed. In this repo run `just grok-build`."
             self._append((self.detail + "\r\n").encode())
             return
+        self._close_master()
         master, slave = pty.openpty()
-        cmd = [str(binary)]
+        # Inline in the center pane. --fullscreen would take the alternate
+        # screen the way Gaius's full-bleed terminal does.
+        cmd = [
+            str(binary),
+            "--minimal",
+            "--no-alt-screen",
+            "--cwd",
+            str(home),
+            "--leader-socket",
+            str(home / "leader.sock"),
+        ]
         if shutil.which("bwrap"):
             cmd.extend(["--sandbox", "workspace"])
             self.status = "sandboxed"
+            self.detail = ""
         else:
             self.status = "host"
             self.detail = "bwrap is absent, so grok is not sandboxed"
+        self.command = cmd
         try:
             self._proc = subprocess.Popen(
                 cmd,
@@ -124,17 +157,20 @@ class TerminalSession:
                 stderr=slave,
                 cwd=str(home),
                 start_new_session=True,
-                env={**os.environ, "GROK_HOME": str(home / "grok-home")},
+                env={**os.environ, "TERM": "xterm-256color", "COLORTERM": "truecolor"},
             )
         except OSError as exc:
             os.close(master)
             os.close(slave)
+            self._proc = None
             self.status = "grok-missing"
             self.detail = str(exc)
             self._append((self.detail + "\r\n").encode())
             return
         os.close(slave)
         self._master = master
+        self._generation += 1
+        generation = self._generation
 
         def _read() -> None:
             while True:
@@ -145,19 +181,43 @@ class TerminalSession:
                 if not chunk:
                     break
                 self._append(chunk)
-            self.status = "closed"
+            if generation == self._generation:
+                self.status = "closed"
 
         threading.Thread(target=_read, name=f"optagent-term-{self.id[:8]}", daemon=True).start()
 
+    def _close_master(self) -> None:
+        fd = self._master
+        self._master = None
+        if fd is None:
+            return
+        try:
+            os.close(fd)
+        except OSError:
+            return
 
-def create_session(section: str = "current") -> dict:
+
+def open_session(section: str = "current", session_id: str = "") -> dict:
+    """Attach a browser session id, or create one. The child survives reload."""
+
     if section not in SECTIONS:
         raise ValueError("section must be archive, current, or scratch")
-    session = TerminalSession(str(uuid.uuid4()), section)
+    chosen = (session_id or "").strip()
+    if chosen and not _SESSION_ID.match(chosen):
+        raise ValueError("session id must be a uuid")
     with _LOCK:
-        _SESSIONS[session.id] = session
-    session.start()
-    return session.public()
+        existing = _SESSIONS.get(chosen) if chosen else None
+        if existing is None:
+            existing = TerminalSession(chosen or str(uuid.uuid4()), section)
+            _SESSIONS[existing.id] = existing
+        else:
+            existing.section = section
+    existing.ensure()
+    return existing.public()
+
+
+def create_session(section: str = "current", session_id: str = "") -> dict:
+    return open_session(section, session_id)
 
 
 def list_sessions(section: str = "") -> list[dict]:

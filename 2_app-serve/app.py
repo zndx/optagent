@@ -809,7 +809,10 @@ def _terminal_response(method: str, parsed, body: bytes) -> tuple[int, str, byte
             encoded = json.dumps({"sessions": list_sessions(section)}).encode()
             return 200, "application/json; charset=utf-8", encoded
         if method == "POST" and path == prefix:
-            created = create_session(str(payload.get("section") or "current"))
+            created = create_session(
+                str(payload.get("section") or "current"),
+                str(payload.get("id") or ""),
+            )
             return 200, "application/json; charset=utf-8", json.dumps(created).encode()
         rest = path[len(prefix) + 1 :]
         session_id, _, action = rest.partition("/")
