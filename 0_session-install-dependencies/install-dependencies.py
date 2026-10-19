@@ -49,6 +49,10 @@ def installable_lines(text: str) -> list[str]:
 
 def main() -> None:
     root = project_root()
+    sys.path.insert(0, str(root / "src"))
+    from optagent.lineup import ensure_corpora_checkout
+
+    ensure_corpora_checkout(root)
     requirements = root / "requirements.txt"
     if not requirements.is_file():
         raise SystemExit(f"requirements.txt was not found at {requirements}")

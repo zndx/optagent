@@ -151,13 +151,13 @@ tasks:
     kernel: python3
     cpu: 1
     memory: 2
-    short_summary: Create the job that installs requirements.txt.
+    short_summary: Create the job that installs requirements.txt and checks out corpora.
     environment_variables:
       TASK_TYPE: CREATE/RUN_JOB
 
   - type: run_job
     entity_label: install_dependencies
-    short_summary: Install runtime dependencies from requirements.txt.
+    short_summary: Install runtime dependencies and check out the corpora submodule.
 
   - type: create_job
     name: Register Impala FDW

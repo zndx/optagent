@@ -142,6 +142,8 @@ def test_corpora_submodule_and_signals_are_the_standalone_contract() -> None:
     assert "branch = trunk" in modules
     just = (ROOT / "justfile").read_text(encoding="utf-8")
     assert "git submodule update --init corpora" in just
+    install = (ROOT / "0_session-install-dependencies" / "install-dependencies.py").read_text(encoding="utf-8")
+    assert "ensure_corpora_checkout" in install
     script = (ROOT / "scripts/airflow/enrich_snapshot_host.sh").read_text(encoding="utf-8")
     assert "/home/rch" not in script
     assert "AEGIR_ROOT:-/" not in script
