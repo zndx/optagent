@@ -40,6 +40,9 @@ from optagent.warehouse import probe_warehouse
 
 
 def main() -> None:
+    from optagent.lineup import ensure_corpora_checkout
+
+    ensure_corpora_checkout(ROOT)
     path = write_status(
         status_path(ROOT),
         greeting_from_env(),

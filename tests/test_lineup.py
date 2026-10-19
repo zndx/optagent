@@ -340,6 +340,46 @@ def test_lexicon_is_the_repo_corpora_pin() -> None:
     assert sysml["broader"] == ["https://signals.zndx.org/sdg#MBSE"]
 
 
+def test_ensure_corpora_checkout_leaves_an_existing_vocabulary(tmp_path: Path, monkeypatch) -> None:
+    from optagent.lineup import ensure_corpora_checkout
+
+    vocab = tmp_path / "corpora" / "vocabulary"
+    vocab.mkdir(parents=True)
+    (vocab / "domain-concepts.ttl").write_text("ok\n", encoding="utf-8")
+    (tmp_path / ".gitmodules").write_text("[submodule]\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+
+    def fail(*_args, **_kwargs):
+        raise AssertionError("git should not run")
+
+    monkeypatch.setattr("optagent.lineup.subprocess.run", fail)
+    assert ensure_corpora_checkout(tmp_path) == tmp_path / "corpora"
+
+
+def test_ensure_corpora_checkout_inits_a_missing_submodule(tmp_path: Path, monkeypatch) -> None:
+    from optagent.lineup import ensure_corpora_checkout
+
+    (tmp_path / ".gitmodules").write_text("[submodule]\n", encoding="utf-8")
+    (tmp_path / ".git").mkdir()
+    seen: list[list[str]] = []
+
+    def fake_run(args, **_kwargs):
+        seen.append(list(args))
+        marker = tmp_path / "corpora" / "vocabulary"
+        marker.mkdir(parents=True)
+        (marker / "domain-concepts.ttl").write_text("ok\n", encoding="utf-8")
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr("optagent.lineup.subprocess.run", fake_run)
+    assert ensure_corpora_checkout(tmp_path) == tmp_path / "corpora"
+    assert seen[0][:4] == ["git", "-C", str(tmp_path), "submodule"]
+    assert seen[0][-1] == "corpora"
+
+
 def test_corpora_root_prefers_env_and_does_not_fall_back_to_aegir(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_SDG_CORPORA", str(tmp_path))
     assert corpora_root() == tmp_path

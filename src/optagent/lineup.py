@@ -79,6 +79,40 @@ def corpora_root() -> Path | None:
     return None
 
 
+def ensure_corpora_checkout(root: Path | None = None) -> Path | None:
+    """Check out the pinned corpora submodule when this clone has never initialized it.
+
+    An AMP ``git pull`` fetches the superproject only. Git then warns that it
+    cannot access ``corpora`` and leaves the directory empty. Summary lexicon
+    panels need the vocabulary file.
+    """
+
+    root = (root or Path(__file__).resolve().parents[2]).resolve()
+    marker = root / "corpora" / "vocabulary" / "domain-concepts.ttl"
+    if marker.is_file():
+        return root / "corpora"
+    if not (root / ".gitmodules").is_file() or not (root / ".git").exists():
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "submodule", "update", "--init", "--", "corpora"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        print("corpora submodule was not initialized", flush=True)
+        return None
+    if result.returncode != 0:
+        print("corpora submodule was not initialized", flush=True)
+        return None
+    if marker.is_file():
+        print("initialized corpora submodule", flush=True)
+        return root / "corpora"
+    return None
+
+
 def _file_stamp(paths: list[Path]) -> tuple:
     stamped = []
     for path in paths:

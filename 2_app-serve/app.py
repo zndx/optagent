@@ -1255,6 +1255,9 @@ def serve(host: str | None = None) -> None:
 
     bind = host or listen_host()
     port = app_port()
+    from optagent.lineup import ensure_corpora_checkout
+
+    ensure_corpora_checkout(project_root())
     server = Server((bind, port), make_handler())
     threading.Thread(target=_warm_after_bind, args=(port,), name="optagent-snapshot-cache", daemon=True).start()
     print(f"serving on http://{bind}:{server.server_port}", flush=True)
