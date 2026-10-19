@@ -1995,7 +1995,7 @@ function TrailPanels({
                       </tr>
                     </thead>
                     <tbody>
-                      {timeline.bins.map((bin) => (
+                      {[...timeline.bins].reverse().map((bin) => (
                         <tr key={bin.start}>
                           <td>
                             <Follow token={`bin|${bin.start}|${bin.end}`} label={formatBinLabel(bin.start, timeline.unit)} onOpen={(token) => onOpen(index, token)} />
