@@ -27,6 +27,39 @@ def _reset() -> None:
     terminal_host._SESSIONS.clear()
 
 
+def test_the_settings_brand_replaces_the_grok_mark(monkeypatch, tmp_path) -> None:
+    _reset()
+    state = tmp_path / "state"
+    state.mkdir()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(state))
+    monkeypatch.delenv("OPTAGENT_BRAND_ID", raising=False)
+    (state / "optagent-ui.json").write_text('{"brand_id": "weathership"}\n', encoding="utf-8")
+    rewriter = terminal_host.LogoRewriter()
+    painted = "\x1b[38;2;180;180;180m" + terminal_host._GROK_LOGO_SMALL[0] + "\x1b[0m"
+    first = rewriter.feed(painted.encode())
+    rest = rewriter.feed("\n".encode()) + rewriter.finish()
+    shown = (first + rest).decode("utf-8")
+    assert "   /\\/\\   " in shown
+    assert "⣀⣤⣤⣀" not in shown
+    (state / "optagent-ui.json").write_text('{"brand_id": "cloudera"}\n', encoding="utf-8")
+    other = terminal_host.LogoRewriter()
+    block = "\n".join(terminal_host._GROK_LOGO_SMALL).encode()
+    text = (other.feed(block[:8]) + other.feed(block[8:]) + other.finish()).decode("utf-8")
+    assert "CLOUDERA" in text
+    assert "⣀⣤⣤⣀" not in text
+
+
+def test_brand_ascii_matches_the_harness_mark() -> None:
+    for brand, small, full in (
+        ("weathership", 10, 14),
+        ("cloudera", 10, 14),
+    ):
+        pairs = terminal_host.brand_logo_pairs(brand)
+        widths = {len(source) for source, _dest in pairs}
+        assert widths == {small, full}
+        assert all(len(source) == len(dest) for source, dest in pairs)
+
+
 def test_a_browser_id_attaches_once_and_stays_inline(monkeypatch, tmp_path) -> None:
     _reset()
     monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))

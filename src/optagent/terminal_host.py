@@ -268,6 +268,178 @@ def resolve_model() -> ModelEndpoint | None:
     return None
 
 
+# Grok Build paints these marks on the welcome card. They are compiled into
+# the harness, so a brand pack replaces them on the way to the VT.
+_GROK_LOGO_SMALL = (
+    "⠀⠀⠀⣀⣤⣤⣀⠀⠀⡠",
+    "⠀⢀⡾⠋⠁⠀⢁⢴⡎⠀",
+    "⠀⢸⡇⠀⠀⠐⠁⢀⣿⠀",
+    "⠀⢈⠗⢀⣀⣀⣠⡾⠃⠀",
+    "⠐⠁⠀⠈⠉⠉⠉⠀⠀⠀",
+)
+_GROK_LOGO_FULL = (
+    "⠀⠀⠀⠀⠀⠀⣀⣀⡀⠀⠀⠀⢀⠄",
+    "⠀⠀⠀⣠⣾⠿⠛⠛⠛⠛⢀⡴⠁⠀",
+    "⠀⠀⣼⡟⠁⠀⠀⠀⢀⡴⠻⣿⡀⠀",
+    "⠀⠀⣿⡇⠀⠀⠀⠔⠁⠀⠀⣿⡇⠀",
+    "⠀⠀⢹⣷⠀⠀⠀⠀⠀⢀⣴⡿⠀⠀",
+    "⠀⢀⠞⠁⠠⢶⣶⣶⣶⠿⠋⠀⠀⠀",
+    "⠐⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀",
+)
+
+
+def brand_logo_pairs(brand_id: str) -> list[tuple[str, str]]:
+    """Equal-width swaps from the active brand pack. A bad file is ignored."""
+
+    root = Path(__file__).resolve().parents[2] / "ui" / "public" / "brand" / brand_id
+    specs = (
+        (_GROK_LOGO_SMALL, "logo-small.txt", 10),
+        (_GROK_LOGO_FULL, "logo.txt", 14),
+    )
+    pairs: list[tuple[str, str]] = []
+    for source, name, width in specs:
+        path = root / name
+        if not path.is_file():
+            continue
+        lines = path.read_text(encoding="utf-8").splitlines()
+        if len(lines) != len(source) or any(len(line) != width for line in lines):
+            continue
+        pairs.extend(zip(source, lines, strict=True))
+    return pairs
+
+
+def _active_brand() -> str:
+    from optagent.brand import active_brand_id
+
+    return active_brand_id(os.environ.get("OPTAGENT_BRAND_ID", "weathership"))
+
+
+class LogoRewriter:
+    """Replace the harness mark with the Settings brand, including across reads."""
+
+    def __init__(self) -> None:
+        self.pairs: list[tuple[str, str]] = []
+        self._brand = ""
+        self._pending = bytearray()
+        self._events: list[tuple[str, str]] = []
+
+    def feed(self, data: bytes) -> bytes:
+        self._sync()
+        if not self.pairs:
+            return data
+        self._pending.extend(data)
+        self._drain()
+        self._replace()
+        return self._flush(self._hold())
+
+    def finish(self) -> bytes:
+        self._sync()
+        if not self.pairs:
+            return b""
+        self._drain()
+        self._replace()
+        return self._flush(0)
+
+    def _sync(self) -> None:
+        brand = _active_brand()
+        if brand == self._brand:
+            return
+        self._brand = brand
+        self.pairs = brand_logo_pairs(brand)
+
+    def _drain(self) -> None:
+        buf = self._pending
+        index = 0
+        while index < len(buf):
+            byte = buf[index]
+            if byte == 0x1B:
+                end = _ansi_end(buf, index)
+                if end is None:
+                    break
+                self._events.append(("ansi", bytes(buf[index:end]).decode("latin1")))
+                index = end
+                continue
+            if byte < 0x80:
+                self._events.append(("ch", chr(byte)))
+                index += 1
+                continue
+            need = 2 if byte < 0xE0 else 3 if byte < 0xF0 else 4
+            if index + need > len(buf):
+                break
+            raw = bytes(buf[index : index + need])
+            try:
+                char = raw.decode("utf-8")
+            except UnicodeDecodeError:
+                char = "?"
+            self._events.append(("ch", char))
+            index += need
+        del buf[:index]
+
+    def _replace(self) -> None:
+        visible = [(pos, event[1]) for pos, event in enumerate(self._events) if event[0] == "ch"]
+        text = "".join(char for _, char in visible)
+        for source, dest in sorted(self.pairs, key=lambda item: len(item[0]), reverse=True):
+            start = 0
+            while True:
+                found = text.find(source, start)
+                if found < 0:
+                    break
+                for offset, char in enumerate(dest):
+                    self._events[visible[found + offset][0]] = ("ch", char)
+                text = text[:found] + dest + text[found + len(source) :]
+                start = found + len(dest)
+
+    def _hold(self) -> int:
+        text = "".join(event[1] for event in self._events if event[0] == "ch")
+        best = 0
+        for source, _dest in self.pairs:
+            limit = min(len(text), len(source) - 1)
+            for size in range(limit, 0, -1):
+                if source.startswith(text[-size:]):
+                    best = max(best, size)
+                    break
+        return best
+
+    def _flush(self, keep: int) -> bytes:
+        if keep <= 0:
+            cut = len(self._events)
+        else:
+            visible = [pos for pos, event in enumerate(self._events) if event[0] == "ch"]
+            if len(visible) <= keep:
+                return b""
+            cut = visible[-keep]
+        out = bytearray()
+        for kind, value in self._events[:cut]:
+            out.extend(value.encode("utf-8" if kind == "ch" else "latin1"))
+        del self._events[:cut]
+        return bytes(out)
+
+
+def _ansi_end(buf: bytearray, start: int) -> int | None:
+    """Return the index after an escape sequence, or None if it is incomplete."""
+
+    if start + 1 >= len(buf):
+        return None
+    kind = buf[start + 1]
+    if kind == 0x5B:  # CSI
+        for index in range(start + 2, len(buf)):
+            if 0x40 <= buf[index] <= 0x7E:
+                return index + 1
+        return None
+    if kind == 0x5D:  # OSC
+        index = start + 2
+        while index < len(buf):
+            if buf[index] == 0x07:
+                return index + 1
+            if buf[index] == 0x1B and index + 1 < len(buf) and buf[index + 1] == 0x5C:
+                return index + 2
+            if buf[index] == 0x1B and index + 1 >= len(buf):
+                return None
+            index += 1
+        return None
+    return start + 2
+
+
 def _write_model_home(home: Path, endpoint: ModelEndpoint) -> Path:
     grok_home = home / "grok-home"
     grok_home.mkdir(parents=True, exist_ok=True)
@@ -448,16 +620,19 @@ class TerminalSession:
         self._master = master
         self._generation += 1
         generation = self._generation
+        rewriter = LogoRewriter()
 
         def _read() -> None:
             while True:
                 try:
                     chunk = os.read(master, 4096)
                 except OSError:
+                    self._append(rewriter.finish())
                     break
                 if not chunk:
+                    self._append(rewriter.finish())
                     break
-                self._append(chunk)
+                self._append(rewriter.feed(chunk))
             if generation == self._generation:
                 self.status = "closed"
 
