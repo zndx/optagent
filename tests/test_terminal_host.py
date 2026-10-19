@@ -37,7 +37,8 @@ def test_the_settings_brand_replaces_the_grok_mark(monkeypatch, tmp_path) -> Non
     rewriter = terminal_host.LogoRewriter()
     block = "\n".join(terminal_host._GROK_LOGO_SMALL) + "\nGrok Build  1.0.62"
     shown = (rewriter.feed(block.encode()) + rewriter.finish()).decode("utf-8")
-    assert "[WxS]" in shown
+    weather = dict(terminal_host.brand_logo_pairs("weathership"))
+    assert weather[terminal_host._GROK_LOGO_SMALL[1]] in shown
     assert "OptAgent" in shown
     assert "Grok Build" not in shown
     assert "⣀⣤⣤⣀" not in shown
@@ -45,8 +46,9 @@ def test_the_settings_brand_replaces_the_grok_mark(monkeypatch, tmp_path) -> Non
     other = terminal_host.LogoRewriter()
     raw = "\n".join(terminal_host._GROK_LOGO_FULL).encode()
     text = (other.feed(raw[:12]) + other.feed(raw[12:]) + other.finish()).decode("utf-8")
-    assert "[C]" in text
-    assert "[WxS]" not in text
+    cloudera = dict(terminal_host.brand_logo_pairs("cloudera"))
+    assert cloudera[terminal_host._GROK_LOGO_FULL[2]] in text
+    assert weather[terminal_host._GROK_LOGO_SMALL[1]] not in text
     assert "⣀⣀⡀" not in text
 
 
@@ -59,6 +61,8 @@ def test_brand_ascii_matches_the_harness_mark() -> None:
         widths = {len(source) for source, _dest in pairs}
         assert widths == {small, full}
         assert all(len(source) == len(dest) for source, dest in pairs)
+        ink = max(sum(ch not in " \u2800" for ch in dest) for _source, dest in pairs)
+        assert ink >= 6
 
 
 def test_a_browser_id_attaches_once_and_stays_inline(monkeypatch, tmp_path) -> None:
