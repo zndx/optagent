@@ -213,6 +213,33 @@ def test_summary_reads_the_varnish_lineup(monkeypatch) -> None:
     assert "ranges=" not in url
 
 
+def test_summary_window_is_its_own_cached_object(monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "6095")
+    seen: dict[str, object] = {}
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    def fake_open(url, timeout=0):
+        seen["url"] = url
+        seen["timeout"] = timeout
+        return Response(json.dumps({"window": "7d", "timeline": {"window": "7d"}, "tracing": {"window": "7d"}}).encode())
+
+    monkeypatch.setattr(APP.urllib.request, "urlopen", fake_open)
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary_window?window=7d")
+    assert status == 200
+    assert json.loads(body)["window"] == "7d"
+    url = str(seen["url"])
+    assert "kind=window" in url
+    assert "window=7d" in url
+    assert "kind=lineup" not in url
+    assert seen["timeout"] == 30
+
+
 def test_summary_ranges_are_their_own_cached_object(monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "6095")
     seen: dict[str, object] = {}

@@ -794,6 +794,54 @@ def _summary_cache_query(raw: str, snapshot_id: str) -> str:
     return urllib.parse.urlencode(items)
 
 
+def _snapshot_now_ms() -> int:
+    """The snapshot's own clock. A frozen snapshot does not move with the wall clock."""
+
+    from optagent.snapshot_store import installed_document
+
+    installed = installed_document() or {}
+    stamp = installed.get("timestamp-ms")
+    if isinstance(stamp, int) and stamp > 0:
+        return stamp
+    if isinstance(stamp, str) and stamp.isdigit():
+        return int(stamp)
+    return int(time.time() * 1000)
+
+
+def _window_cache_query(window: str, snapshot_id: str) -> str:
+    """Timeline and tracing for one window. The ontology stays on the lineup object."""
+
+    items = [("kind", "window"), ("window", window or "365d")]
+    if snapshot_id:
+        items.append(("snapshot", snapshot_id))
+    return urllib.parse.urlencode(items)
+
+
+_WINDOW_CACHE: dict[tuple, dict] = {}
+_WINDOW_NAMES = ("24h", "7d", "30d", "90d", "365d", "all")
+
+
+def _window_document(runtime, window: str) -> dict:
+    from optagent.lineup import timeline_report, tracing_report
+
+    chosen = window if window in _WINDOW_NAMES else "365d"
+    spans = _loaded_spans(runtime)
+    now_ms = _snapshot_now_ms()
+    key = (id(spans), chosen, now_ms)
+    cached = _WINDOW_CACHE.get(key)
+    if cached is not None:
+        return cached
+    body = {
+        "window": chosen,
+        "timeline": timeline_report(spans, now_ms=now_ms, window=chosen),
+        "tracing": tracing_report(spans, now_ms=now_ms, window=chosen),
+    }
+    if len(_WINDOW_CACHE) > 16:
+        _WINDOW_CACHE.clear()
+    _WINDOW_CACHE[key] = body
+    return body
+
+
 def _summary_range_query(raw: str, snapshot_id: str) -> str:
     """A bin that is not in the open window. The ontology is not in this object."""
 
@@ -870,7 +918,7 @@ def _summary_document(runtime, raw_query: str) -> dict:
     live = bool(os.environ.get("OPTAGENT_TRACE_STREAM", "").strip()) and not os.environ.get("CDSW_APP_PORT")
     document["lineup"] = build_lineup(
         spans,
-        now_ms=int(time.time() * 1000),
+        now_ms=_snapshot_now_ms(),
         window=window,
         archive=archived,
         live=live,
@@ -1035,6 +1083,8 @@ def response_for(
         kind = (urllib.parse.parse_qs(parsed.query).get("kind") or ["lineup"])[0]
         if kind == "ranges":
             payload = _summary_range_document(runtime, parsed.query)
+        elif kind == "window":
+            payload = _window_document(runtime, (urllib.parse.parse_qs(parsed.query).get("window") or ["365d"])[0])
         else:
             payload = _summary_document(runtime, parsed.query)
         return 200, "application/json; charset=utf-8", json.dumps(payload).encode(), extra
@@ -1045,6 +1095,13 @@ def response_for(
         cached = _cached_body("summary_origin", cache_query, timeout=30)
         if not cached or b'"lineup"' not in cached or b'"sessions_by_project"' not in cached:
             cached = json.dumps(_summary_document(runtime, cache_query)).encode()
+        return 200, "application/json; charset=utf-8", cached, extra
+    if parsed.path == "/api/optagent/v1/summary_window":
+        requested = (urllib.parse.parse_qs(parsed.query).get("window") or ["365d"])[0]
+        cache_query = _window_cache_query(requested, _loaded_snapshot_id())
+        cached = _cached_body("summary_origin", cache_query, timeout=30)
+        if not cached or b'"timeline"' not in cached or b'"tracing"' not in cached:
+            cached = json.dumps(_window_document(runtime, requested)).encode()
         return 200, "application/json; charset=utf-8", cached, extra
     if parsed.path == "/api/optagent/v1/summary_ranges":
         cache_query = _summary_range_query(parsed.query, _loaded_snapshot_id())

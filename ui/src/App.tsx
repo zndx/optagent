@@ -2391,17 +2391,27 @@ function LineupSummary({ lineup }: { lineup?: LineupDoc }) {
   const projectRef = useRef(project);
   projectRef.current = project;
   const hasView = useRef(lineup != null);
+  const windowsRef = useRef(new Map<string, { timeline: TimelineDoc; tracing: LineupDoc["tracing"] }>());
+  const initialWindowId = useRef(windowId);
   useEffect(() => {
-    const params = new URLSearchParams({ window: windowId });
+    const requested = initialWindowId.current;
+    const params = new URLSearchParams();
+    if (requested !== "365d") params.set("window", requested);
     let cancelled = false;
     if (!hasView.current) setLoading(true);
-    fetch(`/api/optagent/v1/summary?${params.toString()}`)
+    const query = params.toString();
+    fetch(`/api/optagent/v1/summary${query ? `?${query}` : ""}`)
       .then((response) => response.json())
       .then((data: SummaryDoc) => {
-        if (!cancelled && data.lineup) {
-          hasView.current = true;
-          setView(withProjectSessions(data.lineup, projectRef.current));
+        if (cancelled || !data.lineup) return;
+        hasView.current = true;
+        if (data.lineup.timeline && data.lineup.tracing) {
+          windowsRef.current.set(data.lineup.timeline.window || requested, {
+            timeline: data.lineup.timeline,
+            tracing: data.lineup.tracing,
+          });
         }
+        setView(withProjectSessions(data.lineup, projectRef.current));
       })
       .catch(() => undefined)
       .finally(() => {
@@ -2410,7 +2420,46 @@ function LineupSummary({ lineup }: { lineup?: LineupDoc }) {
     return () => {
       cancelled = true;
     };
-  }, [windowId]);
+  }, []);
+  useEffect(() => {
+    if (!view?.timeline || !view.tracing) return;
+    if (view.timeline.window === windowId) {
+      windowsRef.current.set(windowId, { timeline: view.timeline, tracing: view.tracing });
+      return;
+    }
+    const known = windowsRef.current.get(windowId);
+    if (known) {
+      setView((current) => current ? { ...current, timeline: known.timeline, tracing: known.tracing } : current);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/optagent/v1/summary_window?window=${encodeURIComponent(windowId)}`)
+      .then((response) => response.json())
+      .then((data: { timeline?: TimelineDoc; tracing?: LineupDoc["tracing"] }) => {
+        const timeline = data.timeline;
+        const tracing = data.tracing;
+        if (cancelled || !timeline || !tracing) return;
+        windowsRef.current.set(windowId, { timeline, tracing });
+        setView((current) => current ? { ...current, timeline, tracing } : current);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [windowId, view?.timeline, view?.tracing]);
+  useEffect(() => {
+    if (!view?.timeline) return;
+    for (const [id] of WINDOWS) {
+      if (windowsRef.current.has(id)) continue;
+      fetch(`/api/optagent/v1/summary_window?window=${encodeURIComponent(id)}`)
+        .then((response) => response.json())
+        .then((data: { timeline?: TimelineDoc; tracing?: LineupDoc["tracing"] }) => {
+          if (!data.timeline || !data.tracing) return;
+          windowsRef.current.set(data.timeline.window || id, { timeline: data.timeline, tracing: data.tracing });
+        })
+        .catch(() => undefined);
+    }
+  }, [view?.pin]);
   useEffect(() => {
     setView((current) => {
       if (!current?.sessions_by_project) return current;

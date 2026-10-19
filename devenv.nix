@@ -56,8 +56,15 @@
             set beresp.uncacheable = true;
             return (deliver);
           }
-          set beresp.ttl = 60s;
-          set beresp.grace = 6h;
+          # A summary object is named by the snapshot id. The snapshot clock
+          # does not move, so the lineup and each timeline window stay cached.
+          if (bereq.url ~ "summary_origin") {
+            set beresp.ttl = 24h;
+            set beresp.grace = 7d;
+          } else {
+            set beresp.ttl = 60s;
+            set beresp.grace = 6h;
+          }
           set beresp.uncacheable = false;
           return (deliver);
         }
