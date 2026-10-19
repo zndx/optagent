@@ -21,6 +21,62 @@ def _harvest():
     return module
 
 
+def test_readable_only_skips_a_file_dump(tmp_path: Path) -> None:
+    from optagent.backfill import backfill_tree
+
+    project = tmp_path / "projects" / "hermes"
+    project.mkdir(parents=True)
+    stamp = 1_700_000_000_000_000_000
+    prose = (
+        "The specimen is accessioned in the laboratory under a unique identifier "
+        "and the custody record stays with the sample."
+    )
+    dump = '{"task": {"id": "t-1", "title": "A file dump with many tokens and extra words"}}'
+    spans = [
+        make_span(
+            project="hermes",
+            session="hermes:agent-rtc:1",
+            name="prose",
+            activity="agent-rtc",
+            capability="conversation",
+            service_name="agent-rtc",
+            trace_key="prose",
+            start_time_unix_nano=stamp,
+            output_value=prose,
+        ),
+        make_span(
+            project="hermes",
+            session="hermes:agent-rtc:1",
+            name="dump",
+            activity="agent-rtc",
+            capability="conversation",
+            service_name="agent-rtc",
+            trace_key="dump",
+            start_time_unix_nano=stamp,
+            output_value=dump,
+        ),
+    ]
+    from optagent.phoenix_spans import write_jsonl
+
+    write_jsonl(project / "spans.jsonl", spans)
+    seen: list[str] = []
+
+    def admit(text: str) -> dict:
+        seen.append(text[:12])
+        return {"items": []}
+
+    backfill_tree(
+        tmp_path,
+        since_ms=0,
+        until_ms=2_000_000_000_000,
+        admit=admit,
+        augmented_at_ms=1,
+        readable_only=True,
+    )
+    assert len(seen) == 1
+    assert seen[0].startswith("The specimen")
+
+
 def test_viz_show_keeps_the_chart_kind(tmp_path: Path) -> None:
     db = tmp_path / "state.db"
     with sqlite3.connect(db) as conn:

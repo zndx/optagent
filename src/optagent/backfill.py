@@ -129,8 +129,13 @@ def backfill_tree(
     admit,
     augmented_at_ms: int,
     minimum_chars: int = 40,
+    readable_only: bool = False,
 ) -> dict:
-    """Admit genera on spans inside ``[since_ms, until_ms]``. Other spans stay as harvested."""
+    """Admit genera on spans inside ``[since_ms, until_ms]``. Other spans stay as harvested.
+
+    ``readable_only`` skips file dumps and JSON so the aperture sees meaningful
+    agent prose.
+    """
 
     files = sorted((root / "projects").glob("*/spans.jsonl"))
     spans_by_file: list[tuple[Path, list[dict]]] = [(path, read_jsonl(path)) for path in files]
@@ -153,6 +158,8 @@ def backfill_tree(
                 continue
             text = span_text(span)
             if len(text.strip()) < minimum_chars:
+                continue
+            if readable_only and not readable_segment(text):
                 continue
             examined += 1
             if examined == 1 or examined % 25 == 0:
@@ -194,7 +201,14 @@ def aperture_admit(text: str) -> dict:
     return item_scan(text, tau=TAU)
 
 
-def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = False) -> dict:
+def run(
+    snapshot: Path,
+    *,
+    since: str = "",
+    until: str = "",
+    install: bool = False,
+    readable_only: bool = False,
+) -> dict:
     """Backfill one snapshot directory. Empty ``since`` covers every span in it."""
 
     root = Path(snapshot)
@@ -207,6 +221,7 @@ def run(snapshot: Path, *, since: str = "", until: str = "", install: bool = Fal
         until_ms=until_ms,
         admit=aperture_admit,
         augmented_at_ms=now_ms,
+        readable_only=readable_only,
     )
     if install:
         from optagent.snapshot_store import install_archive

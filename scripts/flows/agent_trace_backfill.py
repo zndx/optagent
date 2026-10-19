@@ -23,6 +23,11 @@ class AgentTraceBackfillFlow(FlowSpec):
     since = Parameter("since", help="UTC inclusive start. Empty covers the whole snapshot.", default="")
     until = Parameter("until", help="UTC inclusive end. Empty means now.", default="")
     classify = Parameter("classify", help="Run TypeSafe short-span classification after admission.", default="false")
+    readable_only = Parameter(
+        "readable_only",
+        help="Admit only readable agent prose. Skips file dumps and JSON.",
+        default="false",
+    )
 
     @step
     def start(self):
@@ -33,7 +38,8 @@ class AgentTraceBackfillFlow(FlowSpec):
         root = Path(str(self.snapshot))
         since = str(self.since or "")
         until = str(self.until or "")
-        self.result = run(root, since=since, until=until)
+        prose = str(self.readable_only or "").lower() in {"1", "true", "yes"}
+        self.result = run(root, since=since, until=until, readable_only=prose)
         if str(self.classify or "").lower() in {"1", "true", "yes"}:
             from optagent.classify import classify_snapshot
 
