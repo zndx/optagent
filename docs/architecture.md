@@ -13,6 +13,7 @@ flowchart TD
 | Piece | Role |
 | --- | --- |
 | `devenv.nix` | Local Python 3.12 environment, Rust 1.94.0 (`languages.rust`), and PostgreSQL 16 on port 5599. `languages.python` with uv syncs the project, including the `dev` extra. `just grok-build` compiles `zndx/oss-grok-build` with that toolchain. `processes.prepare` is the one-shot job. `processes.app` serves the page on lattice port 9892 after that job finishes |
+| `corpora` | Pinned `sdg-corpora` release (`97957d0ae2b210b75b4eaedf5ae6588ff84126b9`). Lexicon and schema panels read this tree. `just corpora` initializes the submodule |
 | `components/impala_fdw` | `weathership/impala_fdw` `trunk`. Native PostgreSQL extension. Kudu scans and writes use `kudu_scan`. Iceberg tables and Impala UNION views use `impala_sql` |
 | `0_session-install-dependencies` | CML job that installs `requirements.txt`. The directory keeps the community template name. The task type is `create_job` / `run_job`. PBJ runtimes fail AMP setup steps that run as sessions |
 | `1_job-prepare-project` | Writes the status snapshot. Imports the model from `src/` |
@@ -20,6 +21,12 @@ flowchart TD
 | `.project-metadata.yaml` | CML runbook. PBJ Workbench on Python 3.12 or 3.13, and JupyterLab on Python 3.12, Standard edition |
 | `catalog-entry.yaml` | Entry for a custom CML AMP catalog |
 | `METADATA.yaml` | Fields for the Cloudera blueprint website |
+
+## Standalone host
+
+OptAgent builds and serves a snapshot with this repository alone. Signals at `~/local/src/wxs/signals` is the only sibling it needs, and only when a run publishes a warehouse product (`SIGNALS_ROOT` overrides that path). Federated projects are independent data sources. Gaius, Aegir, Atelier, Hermes, Metabase, and Semantica are not checkouts the build, the Summary page, or the AMP requires.
+
+`just corpora` runs `git submodule update --init corpora`. `OPTAGENT_SDG_CORPORA` selects another vocabulary tree. Aperture admission is optional: set `AEGIR_ROOT` so that checkout is on `PYTHONPATH`, and `AEGIR_PYTHON` when that tree's interpreter has to run the encoder. HX export runs only when `OPTAGENT_GAIUS_PYTHON` names an interpreter. Semantica harvest runs only when `SEMANTICA_DATABASE_URL` is set. Harvest writes under `build/signals-snapshot` unless `OPTAGENT_HARVEST_OUT` is set.
 
 ## Why the scripts look the way they do
 

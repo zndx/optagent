@@ -194,10 +194,19 @@ def backfill_tree(
 
 
 def aperture_admit(text: str) -> dict:
-    """Local Aegir aperture. The import is deferred so harvest tests do not load the encoder."""
+    """Local Aegir aperture. The import is deferred so harvest tests do not load the encoder.
 
-    from aegir.ontology.admission_items import item_scan
+    Viewing a snapshot does not call this. Admission needs an Aegir checkout
+    on ``PYTHONPATH`` (``AEGIR_ROOT``). OptAgent does not vendor that tree.
+    """
 
+    try:
+        from aegir.ontology.admission_items import item_scan
+    except ImportError as exc:
+        raise RuntimeError(
+            "SDG aperture admission needs the Aegir checkout on PYTHONPATH (AEGIR_ROOT). "
+            "Viewing a snapshot does not."
+        ) from exc
     return item_scan(text, tau=TAU)
 
 

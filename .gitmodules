@@ -2,3 +2,7 @@
 	path = components/impala_fdw
 	url = https://github.com/weathership/impala_fdw.git
 	branch = trunk
+[submodule "corpora"]
+	path = corpora
+	url = https://github.com/zndx/sdg-corpora.git
+	branch = trunk

@@ -6,7 +6,15 @@ import json
 import tarfile
 from pathlib import Path
 
-from optagent.enriched import PRODUCT_ID, build_manifest, enrichment_counts, pack_snapshot, product_facts, publish
+from optagent.enriched import (
+    PRODUCT_ID,
+    build_manifest,
+    enrichment_counts,
+    pack_snapshot,
+    product_facts,
+    publish,
+    signals_root,
+)
 from optagent.lineup import build_lineup
 from optagent.phoenix_spans import make_span, write_jsonl
 
@@ -142,3 +150,11 @@ def test_baseline_keeps_short_links_and_omits_scores(tmp_path: Path) -> None:
     assert lineup["product"]["data_uri"].endswith("/snap-1.tar.gz")
     facts = product_facts(manifest, lineup["product"]["data_uri"])
     assert facts["run.Snapshot/snap-1.data_uri"].endswith("/snap-1.tar.gz")
+
+
+def test_signals_root_defaults_to_the_user_checkout(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.delenv("SIGNALS_ROOT", raising=False)
+    monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
+    assert signals_root() == tmp_path / "local" / "src" / "wxs" / "signals"
+    monkeypatch.setenv("SIGNALS_ROOT", str(tmp_path / "elsewhere"))
+    assert signals_root() == tmp_path / "elsewhere"

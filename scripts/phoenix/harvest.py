@@ -792,16 +792,22 @@ def build_archive(
     return archive
 
 
-def main() -> None:
+def argument_parser() -> argparse.ArgumentParser:
+    """Peer checkouts are optional. Empty HX and Semantica settings skip those sources."""
+
     parser = argparse.ArgumentParser(description="Harvest lattice traces into a signals-snapshot archive.")
-    parser.add_argument("--out", default="/raid/build/optagent/signals-snapshot")
-    parser.add_argument("--gaius-url", default="postgresql://127.0.0.1:5444/zndx_gaius")
-    parser.add_argument("--metabase-url", default="postgresql://127.0.0.1:5432/metabase")
-    parser.add_argument("--hermes-db", default="~/.hermes/state.db")
-    parser.add_argument("--semantica-url", default=os.environ.get("SEMANTICA_DATABASE_URL", "postgresql://127.0.0.1:5588/semantica"))
-    parser.add_argument("--hx-python", default=os.environ.get("OPTAGENT_GAIUS_PYTHON", "/home/rch/local/src/zndx/gaius/.devenv/state/venv/bin/python"))
-    parser.add_argument("--hx-cwd", default=os.environ.get("OPTAGENT_GAIUS_ROOT", "/home/rch/local/src/zndx/gaius"))
-    args = parser.parse_args()
+    parser.add_argument("--out", default=os.environ.get("OPTAGENT_HARVEST_OUT", "build/signals-snapshot"))
+    parser.add_argument("--gaius-url", default=os.environ.get("OPTAGENT_GAIUS_URL", "postgresql://127.0.0.1:5444/zndx_gaius"))
+    parser.add_argument("--metabase-url", default=os.environ.get("OPTAGENT_METABASE_URL", "postgresql://127.0.0.1:5432/metabase"))
+    parser.add_argument("--hermes-db", default=os.environ.get("OPTAGENT_HERMES_DB", "~/.hermes/state.db"))
+    parser.add_argument("--semantica-url", default=os.environ.get("SEMANTICA_DATABASE_URL", ""))
+    parser.add_argument("--hx-python", default=os.environ.get("OPTAGENT_GAIUS_PYTHON", ""))
+    parser.add_argument("--hx-cwd", default=os.environ.get("OPTAGENT_GAIUS_ROOT", ""))
+    return parser
+
+
+def main() -> None:
+    args = argument_parser().parse_args()
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     dest = Path(args.out) / stamp
     archive = build_archive(

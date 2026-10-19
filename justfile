@@ -21,6 +21,10 @@ impala-fdw-install:
 rustc:
     rustc --version
 
+# Check out the pinned sdg-corpora release. Summary lexicon panels read corpora/.
+corpora:
+    git submodule update --init corpora
+
 # Build grok from git@github.com:zndx/oss-grok-build.git with this shell's cargo.
 # The release binary is xai-grok-pager. The terminal invokes it as grok.
 # Set GROK_SRC to build a checkout you already have.

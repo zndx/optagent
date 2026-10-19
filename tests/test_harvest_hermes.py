@@ -177,3 +177,17 @@ def test_hermes_messages_keep_their_timestamps_and_reasoning(tmp_path: Path) -> 
     assert written["attributes"]["sdg.spans"][0]["start"] == 0
     assert written["attributes"]["sdg.spans"][0]["end"] == 77
     assert archive.is_file()
+
+
+def test_harvest_defaults_skip_optional_peers(monkeypatch) -> None:
+    monkeypatch.delenv("OPTAGENT_GAIUS_PYTHON", raising=False)
+    monkeypatch.delenv("OPTAGENT_GAIUS_ROOT", raising=False)
+    monkeypatch.delenv("SEMANTICA_DATABASE_URL", raising=False)
+    monkeypatch.delenv("OPTAGENT_HARVEST_OUT", raising=False)
+    args = _harvest().argument_parser().parse_args([])
+    assert args.out == "build/signals-snapshot"
+    assert args.hx_python == ""
+    assert args.hx_cwd == ""
+    assert args.semantica_url == ""
+    assert "/home/" not in args.hx_python
+    assert "/home/" not in args.hx_cwd

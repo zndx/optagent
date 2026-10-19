@@ -6,12 +6,12 @@ Enriched term links are already on the spans in the archive. The snapshot
 id is the version. A later snapshot is a new object. Run against the
 installed snapshot:
 
-  python -m optagent.enriched /home/rch/local/src/zndx/optagent/.devenv/state/signals-snapshot
+  python -m optagent.enriched .devenv/state/signals-snapshot
 
 Metaflow, when the platform profile is active:
 
   python scripts/flows/enriched_trace_product.py run \\
-    --snapshot /home/rch/local/src/zndx/optagent/.devenv/state/signals-snapshot
+    --snapshot .devenv/state/signals-snapshot
 """
 
 from __future__ import annotations

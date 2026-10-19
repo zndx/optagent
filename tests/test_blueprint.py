@@ -133,3 +133,19 @@ def test_catalog_points_at_this_repo() -> None:
     assert 'public_github_link: "https://github.com/zndx/optagent"' in metadata
     assert "Launchable (AMP)" in metadata
     assert "launchable: true" in metadata
+
+
+def test_corpora_submodule_and_signals_are_the_standalone_contract() -> None:
+    modules = (ROOT / ".gitmodules").read_text(encoding="utf-8")
+    assert "path = corpora" in modules
+    assert "url = https://github.com/zndx/sdg-corpora.git" in modules
+    assert "branch = trunk" in modules
+    just = (ROOT / "justfile").read_text(encoding="utf-8")
+    assert "git submodule update --init corpora" in just
+    script = (ROOT / "scripts/airflow/enrich_snapshot_host.sh").read_text(encoding="utf-8")
+    assert "/home/rch" not in script
+    assert "AEGIR_ROOT:-/" not in script
+    assert 'SIGNALS="${HOME}/local/src/wxs/signals"' in script or "${HOME}/local/src/wxs/signals" in script
+    harvest = (ROOT / "scripts/phoenix/harvest.py").read_text(encoding="utf-8")
+    assert "/home/rch" not in harvest
+    assert "postgresql://127.0.0.1:5588/semantica" not in harvest

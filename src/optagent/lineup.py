@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Summary lineup: published SDG panels plus tracing from a snapshot.
 
-Lexicon and schema come from the sdg-corpora release Aegir pins. Traces do
-not create concepts. Scratch is always listed. An AMP has no live stream.
+Lexicon and schema come from the sdg-corpora release this repo pins
+(`corpora/`). Traces do not create concepts. Scratch is always listed.
+An AMP has no live stream. Aegir is not required to read the lexicon.
 """
 
 from __future__ import annotations
@@ -63,12 +64,18 @@ def checkout_sha(root: Path | None) -> str:
 
 
 def corpora_root() -> Path | None:
+    """Published vocabulary shipped with this repo.
+
+    ``OPTAGENT_SDG_CORPORA`` overrides the path. Otherwise the checkout is
+    the ``corpora`` submodule. There is no sibling-project fallback.
+    """
+
     configured = os.environ.get("OPTAGENT_SDG_CORPORA", "").strip()
     if configured and Path(configured).is_dir():
         return Path(configured)
-    sibling = Path("/home/rch/local/src/zndx/aegir/corpora")
-    if sibling.is_dir():
-        return sibling
+    local = Path(__file__).resolve().parents[2] / "corpora"
+    if (local / "vocabulary" / "domain-concepts.ttl").is_file():
+        return local
     return None
 
 

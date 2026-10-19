@@ -286,10 +286,22 @@ def _signals_env(root: Path) -> dict[str, str]:
     return env
 
 
+def signals_root() -> Path:
+    """Signals checkout. The only required sibling platform.
+
+    ``SIGNALS_ROOT`` overrides the default ``~/local/src/wxs/signals``.
+    """
+
+    configured = os.environ.get("SIGNALS_ROOT", "").strip()
+    if configured:
+        return Path(configured)
+    return Path.home() / "local" / "src" / "wxs" / "signals"
+
+
 def review_via_signals(facts: dict[str, str], *, summary: str) -> dict:
     """Record tx, details, and hx through Signals. OptAgent does not open the warehouse."""
 
-    root = Path(os.environ.get("SIGNALS_ROOT") or "/home/rch/local/src/wxs/signals")
+    root = signals_root()
     script = (
         "import json, sys\n"
         "from signals.ops.history import review\n"

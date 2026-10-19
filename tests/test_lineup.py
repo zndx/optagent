@@ -7,6 +7,8 @@ from optagent.lineup import (
     SDG_PIN,
     bucket_unit,
     build_lineup,
+    checkout_sha,
+    corpora_root,
     load_lexicon,
     load_schema,
     session_items,
@@ -318,3 +320,31 @@ def test_session_list_keeps_linked_and_unlinked_admitted_passages() -> None:
     )
     with_dump = session_items([*spans, dump], "hermes")
     assert [item["name"] for item in with_dump[0]["items"]] == ["linked", "unlinked", "dump"]
+
+
+def test_lexicon_is_the_repo_corpora_pin() -> None:
+    root = corpora_root()
+    assert root is not None
+    assert root.name == "corpora"
+    assert "aegir" not in root.parts
+    assert (root / "vocabulary" / "domain-concepts.ttl").is_file()
+    assert checkout_sha(root) == SDG_PIN
+    by_iri = {item["iri"]: item for item in load_lexicon(root)}
+    mbse = by_iri["https://signals.zndx.org/sdg#MBSE"]
+    assert mbse["code"] == "18.1"
+    assert mbse["label"] == "Model-Based Systems Engineering"
+    assert mbse["broader"] == ["https://signals.zndx.org/sdg#Engineering"]
+    sysml = by_iri["https://signals.zndx.org/sdg#SYSML"]
+    assert sysml["code"] == "18.1.1"
+    assert sysml["label"] == "SysMLv2"
+    assert sysml["broader"] == ["https://signals.zndx.org/sdg#MBSE"]
+
+
+def test_corpora_root_prefers_env_and_does_not_fall_back_to_aegir(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_SDG_CORPORA", str(tmp_path))
+    assert corpora_root() == tmp_path
+    monkeypatch.setenv("OPTAGENT_SDG_CORPORA", str(tmp_path / "missing"))
+    root = corpora_root()
+    assert root is not None
+    assert root.name == "corpora"
+    assert "aegir" not in root.parts

@@ -164,7 +164,7 @@
   };
 
   enterShell = ''
-    echo "optagent: $(python --version), rustc $(rustc --version) — just test, just grok-build, devenv up (http://tinybox.dev.vista.zndx.org:9892)"
+    echo "optagent: $(python --version), rustc $(rustc --version) — just corpora, just test, just grok-build, devenv up (http://tinybox.dev.vista.zndx.org:9892)"
   '';
 
   # devenv 2 runs this task during `devenv test`. The enterTest string

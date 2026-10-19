@@ -20,6 +20,10 @@ from airflow.providers.cncf.kubernetes.operators.pod import KubernetesPodOperato
 from kubernetes.client import models as k8s
 
 DAG_ID = "optagent_agent_trace_backfill"
+# The pod runs as root, so $HOME is /root. This path is the lab mount of the
+# checkout (the same path the host uses). The script resolves its own repo
+# and finds Signals under ~/local/src/wxs/signals. A standalone host runs
+# the script directly and does not need this DAG.
 HOST_SCRIPT = "/home/rch/local/src/zndx/optagent/scripts/airflow/enrich_snapshot_host.sh"
 
 

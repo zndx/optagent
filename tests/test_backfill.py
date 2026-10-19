@@ -1,13 +1,16 @@
 # Copyright 2026 zndx
 # SPDX-License-Identifier: Apache-2.0
 
+import builtins
 import importlib.util
 import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from optagent.backfill import apply_admission, backfill_tree, last_days
+import pytest
+
+from optagent.backfill import aperture_admit, apply_admission, backfill_tree, last_days
 from optagent.phoenix_spans import make_span, read_jsonl
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -257,3 +260,16 @@ def test_backfill_window_leaves_older_spans_unchanged(tmp_path: Path) -> None:
     by_name = {span["name"]: span for span in written}
     assert by_name["new"]["attributes"]["aegir.genus_code"] == "9"
     assert "aegir.genus_code" not in by_name["old"]["attributes"]
+
+
+def test_aperture_without_aegir_fails_clearly(monkeypatch) -> None:
+    real_import = builtins.__import__
+
+    def guarded(name, globals=None, locals=None, fromlist=(), level=0):
+        if name == "aegir.ontology.admission_items" or name == "aegir":
+            raise ImportError("no aegir")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    with pytest.raises(RuntimeError, match="AEGIR_ROOT"):
+        aperture_admit("a readable passage about provenance")
