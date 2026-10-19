@@ -105,7 +105,7 @@ class TerminalSession:
         home.mkdir(parents=True, exist_ok=True)
         if binary is None:
             self.status = "grok-missing"
-            self.detail = "grok is not installed. Build it with `just grok-build` in Gaius."
+            self.detail = "grok is not installed. In this repo run `just grok-build`."
             self._append((self.detail + "\r\n").encode())
             return
         master, slave = pty.openpty()

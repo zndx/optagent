@@ -11,6 +11,8 @@
     gnumake
     just
     pkg-config
+    protobuf
+    openssl
   ];
 
   # Warehouse front. Same kind of postmaster Gaius (:5444) and Signals
@@ -108,6 +110,16 @@
     venv.enable = true;
   };
 
+  # grok-build's rust-toolchain.toml pins 1.94.0. This shell supplies that
+  # toolchain. `just grok-build` compiles zndx/oss-grok-build with it.
+  # CML does not read this block.
+  languages.rust = {
+    enable = true;
+    channel = "stable";
+    version = "1.94.0";
+    components = [ "rustc" "cargo" "clippy" "rustfmt" "rust-src" ];
+  };
+
   # Lattice engine. Status on :50851. Does not host a model.
   processes.engine = {
     exec = "python -m optagent.engine";
@@ -138,6 +150,7 @@
     env.OPTAGENT_PRIMARY_UI = "http://tinybox.dev.vista.zndx.org:9892";
     env.OPTAGENT_VARNISH_PORT = "6095";
     env.OPTAGENT_SESSION_DIR = "${config.devenv.root}/.devenv/state";
+    env.OPTAGENT_GROK_BIN = "${config.devenv.root}/.devenv/state/bin/grok";
     after = [ "devenv:processes:prepare@completed" ];
     ready.http.get = {
       host = "127.0.0.1";
@@ -151,7 +164,7 @@
   };
 
   enterShell = ''
-    echo "optagent: $(python --version) — just test, devenv up (http://tinybox.dev.vista.zndx.org:9892)"
+    echo "optagent: $(python --version), rustc $(rustc --version) — just test, just grok-build, devenv up (http://tinybox.dev.vista.zndx.org:9892)"
   '';
 
   # devenv 2 runs this task during `devenv test`. The enterTest string

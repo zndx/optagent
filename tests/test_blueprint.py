@@ -89,6 +89,9 @@ def test_runtime_dependencies_match_the_project() -> None:
 def test_devenv_is_the_local_runtime() -> None:
     nix = (ROOT / "devenv.nix").read_text(encoding="utf-8")
     assert "package = pkgs.python312" in nix
+    assert "languages.rust" in nix
+    assert 'channel = "stable"' in nix
+    assert 'version = "1.94.0"' in nix
     assert "uv.sync.enable = true" in nix
     assert 'uv.sync.extras = [ "dev" ]' in nix
     assert "processes.prepare" in nix

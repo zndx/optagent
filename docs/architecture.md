@@ -12,7 +12,7 @@ flowchart TD
 
 | Piece | Role |
 | --- | --- |
-| `devenv.nix` | Local Python 3.12 environment and PostgreSQL 16 on port 5599. `languages.python` with uv syncs the project, including the `dev` extra. `processes.prepare` is the one-shot job. `processes.app` serves the page on lattice port 9892 after that job finishes |
+| `devenv.nix` | Local Python 3.12 environment, Rust 1.94.0 (`languages.rust`), and PostgreSQL 16 on port 5599. `languages.python` with uv syncs the project, including the `dev` extra. `just grok-build` compiles `zndx/oss-grok-build` with that toolchain. `processes.prepare` is the one-shot job. `processes.app` serves the page on lattice port 9892 after that job finishes |
 | `components/impala_fdw` | `weathership/impala_fdw` `trunk`. Native PostgreSQL extension. Kudu scans and writes use `kudu_scan`. Iceberg tables and Impala UNION views use `impala_sql` |
 | `0_session-install-dependencies` | CML job that installs `requirements.txt`. The directory keeps the community template name. The task type is `create_job` / `run_job`. PBJ runtimes fail AMP setup steps that run as sessions |
 | `1_job-prepare-project` | Writes the status snapshot. Imports the model from `src/` |

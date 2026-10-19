@@ -16,3 +16,36 @@ app:
 # Build impala_fdw against PostgreSQL 16, then register it on :5466.
 impala-fdw-install:
     devenv tasks run impala-fdw:install
+
+# Show the devenv Rust toolchain. grok-build requires 1.94.0.
+rustc:
+    rustc --version
+
+# Build grok from git@github.com:zndx/oss-grok-build.git with this shell's cargo.
+# The release binary is xai-grok-pager. The terminal invokes it as grok.
+# Set GROK_SRC to build a checkout you already have.
+grok-build src="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="${GROK_SRC:-{{src}}}"
+    if [[ -z "$root" ]]; then
+      root="${DEVENV_ROOT:-$PWD}/.devenv/state/src/oss-grok-build"
+    fi
+    if [[ ! -f "$root/Cargo.toml" ]]; then
+      echo "cloning zndx/oss-grok-build into $root"
+      git clone --depth 1 git@github.com:zndx/oss-grok-build.git "$root"
+    fi
+    have="$(rustc --version)"
+    echo "$have"
+    case "$have" in
+      *"1.94."*) ;;
+      *)
+        echo "this devenv should provide rustc 1.94.0 (grok-build rust-toolchain.toml)" >&2
+        exit 1
+        ;;
+    esac
+    cargo build -p xai-grok-pager-bin --release --manifest-path "$root/Cargo.toml"
+    bindir="${DEVENV_ROOT:-$PWD}/.devenv/state/bin"
+    install -d "$bindir"
+    install -m 0755 "$root/target/release/xai-grok-pager" "$bindir/grok"
+    echo "installed $bindir/grok"
