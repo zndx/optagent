@@ -2676,6 +2676,7 @@ function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
   const [chart, setChart] = useState<number[]>([]);
   const cursor = useRef(0);
   const host = useRef<HTMLDivElement>(null);
+  const fitRef = useRef<(() => void) | null>(null);
 
   const attach = useCallback((id: string, target: string) => {
     try {
@@ -2712,6 +2713,21 @@ function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
     refresh();
     void attach(rememberSession(section), section);
   }, [refresh, attach, section]);
+
+  useEffect(() => {
+    let second = 0;
+    const run = () => fitRef.current?.();
+    const first = window.requestAnimationFrame(() => {
+      run();
+      second = window.requestAnimationFrame(run);
+    });
+    const timer = window.setTimeout(run, 80);
+    return () => {
+      window.cancelAnimationFrame(first);
+      window.cancelAnimationFrame(second);
+      window.clearTimeout(timer);
+    };
+  }, [askOpen]);
 
   useEffect(() => {
     const node = host.current;
@@ -2770,15 +2786,19 @@ function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
       term = created;
       const sendSize = () => {
         if (typeof fit.fit === "function") fit.fit();
+        const cols = Math.max(2, created.cols || 80);
+        const rows = Math.max(2, created.rows || 24);
         fetch(`/api/optagent/v1/terminal/sessions/${active}/resize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ cols: created.cols || 80, rows: created.rows || 24 }),
+          body: JSON.stringify({ cols, rows }),
         }).catch(() => undefined);
       };
+      fitRef.current = sendSize;
       sendSize();
       observed = new ResizeObserver(() => sendSize());
       observed.observe(node);
+      if (node.parentElement) observed.observe(node.parentElement);
       created.onData((data) => {
         fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
           method: "POST",
@@ -2813,6 +2833,7 @@ function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
     });
     return () => {
       stopped = true;
+      fitRef.current = null;
       observed?.disconnect();
       window.clearTimeout(timer);
       node.replaceChildren();

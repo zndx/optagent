@@ -16,6 +16,7 @@ import os
 import pty
 import re
 import shutil
+import signal
 import subprocess
 import threading
 import time
@@ -536,6 +537,13 @@ class TerminalSession:
 
         try:
             fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", int(rows), int(cols), 0, 0))
+        except OSError:
+            return
+        proc = self._proc
+        if proc is None or proc.poll() is not None:
+            return
+        try:
+            os.kill(proc.pid, signal.SIGWINCH)
         except OSError:
             return
 

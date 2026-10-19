@@ -52,6 +52,28 @@ def test_the_settings_brand_replaces_the_grok_mark(monkeypatch, tmp_path) -> Non
     assert "⣀⣀⡀" not in text
 
 
+def test_resize_wakes_the_harness(monkeypatch, tmp_path) -> None:
+    _reset()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    _fake_grok(tmp_path, monkeypatch)
+    created = create_session("current", "66666666-6666-4666-8666-666666666666")
+    session = terminal_host.get_session(created["id"])
+    seen: list[int] = []
+    real_kill = os.kill
+
+    def record(pid: int, sig: int) -> None:
+        seen.append(sig)
+        if sig != terminal_host.signal.SIGWINCH:
+            real_kill(pid, sig)
+
+    monkeypatch.setattr(os, "kill", record)
+    session.resize(100, 40)
+    assert terminal_host.signal.SIGWINCH in seen
+    assert session._proc is not None
+    real_kill(session._proc.pid, terminal_host.signal.SIGKILL)
+    session._proc.wait(timeout=2)
+
+
 def test_brand_ascii_matches_the_harness_mark() -> None:
     for brand, small, full in (
         ("weathership", 10, 14),

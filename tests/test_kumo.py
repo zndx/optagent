@@ -62,6 +62,9 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "height={28}" in source
     css = (ROOT / "ui" / "src" / "index.css").read_text(encoding="utf-8")
     assert "1px solid var(--color-kumo-hairline" in css
+    assert ".term-main #terminal" in css
+    assert "min-width: 0" in css
+    assert "requestAnimationFrame" in source
     assert "@cloudflare/kumo/styles/tailwind" in css
     assert "theme-keiretsu.css" in css
     assert ".brand-logo" in css
