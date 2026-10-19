@@ -183,26 +183,61 @@ def test_summary_reads_the_varnish_lineup(monkeypatch) -> None:
     def fake_open(url, timeout=0):
         seen["url"] = url
         seen["timeout"] = timeout
-        body = json.dumps({"format": "optagent-summary", "lineup": {"pin": "cached"}, "groups": []}).encode()
+        body = json.dumps({
+            "format": "optagent-summary",
+            "lineup": {"pin": "cached", "sessions_by_project": {"hermes": []}},
+            "groups": [],
+        }).encode()
         return Response(body)
 
     monkeypatch.setattr(APP.urllib.request, "urlopen", fake_open)
-    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary?window=365d")
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary?window=365d&project=hermes")
     document = json.loads(body)
     assert status == 200
     assert document["lineup"]["pin"] == "cached"
-    assert str(seen["url"]).endswith("/api/optagent/v1/summary_origin") or "summary_origin?" in str(seen["url"])
-    assert "window=" not in str(seen["url"])
+    url = str(seen["url"])
+    assert "summary_origin?" in url
+    assert "kind=lineup" in url
+    assert "window=" not in url
+    assert "project=" not in url
     assert seen["timeout"] == 30
     status, _, body, _extra = APP.response_for(
         "GET",
-        "/api/optagent/v1/summary?window=7d&project=hermes&ranges=10:20",
+        "/api/optagent/v1/summary?window=7d&project=gaius&ranges=10:20",
     )
     assert json.loads(body)["lineup"]["pin"] == "cached"
     url = str(seen["url"])
+    assert "kind=lineup" in url
     assert "window=7d" in url
-    assert "project=hermes" in url
+    assert "project=" not in url
+    assert "ranges=" not in url
+
+
+def test_summary_ranges_are_their_own_cached_object(monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "6095")
+    seen: dict[str, object] = {}
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    def fake_open(url, timeout=0):
+        seen["url"] = url
+        seen["timeout"] = timeout
+        return Response(json.dumps({"ranges": [{"start": 10, "end": 20}]}).encode())
+
+    monkeypatch.setattr(APP.urllib.request, "urlopen", fake_open)
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary_ranges?ranges=10:20")
+    assert status == 200
+    assert json.loads(body)["ranges"][0]["start"] == 10
+    url = str(seen["url"])
+    assert "kind=ranges" in url
     assert "ranges=10" in url
+    assert "kind=lineup" not in url
+    assert seen["timeout"] == 30
 
 
 def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:
@@ -212,6 +247,7 @@ def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:
     assert status == 200
     assert content_type.startswith("application/json")
     assert summary["format"] == "optagent-summary"
+    assert "sessions_by_project" in summary["lineup"]
     assert summary["groups"][0]["title"] == "SECTION"
     assert any(panel["project"] == "aegir" for panel in summary["panels"])
     assert "metadata-location" in summary["panels"][0]["body"]

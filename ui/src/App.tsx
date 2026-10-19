@@ -95,6 +95,7 @@ type LineupDoc = {
   timeline?: TimelineDoc;
   ranges?: TimelineBin[];
   sessions: { id: string; traces: number; linked?: number; items: LineupSessionItem[] }[];
+  sessions_by_project?: Record<string, { id: string; traces: number; linked?: number; items: LineupSessionItem[] }[]>;
   published: string[];
   product?: {
     id: string;
@@ -2365,6 +2366,18 @@ function TrailPanels({
   );
 }
 
+const NO_SESSIONS: LineupDoc["sessions"] = [];
+
+function sessionsFor(lineup: LineupDoc, projectName: string): LineupDoc["sessions"] {
+  if (!projectName) return NO_SESSIONS;
+  return lineup.sessions_by_project?.[projectName] ?? lineup.sessions ?? NO_SESSIONS;
+}
+
+function withProjectSessions(lineup: LineupDoc, projectName: string): LineupDoc {
+  const sessions = sessionsFor(lineup, projectName);
+  return sessions === lineup.sessions ? lineup : { ...lineup, sessions };
+}
+
 function LineupSummary({ lineup }: { lineup?: LineupDoc }) {
   const stored = useRef(loadStoredTrail());
   const [root, setRoot] = useState(stored.current?.root || "current");
@@ -2375,17 +2388,20 @@ function LineupSummary({ lineup }: { lineup?: LineupDoc }) {
   const [loading, setLoading] = useState(lineup == null);
   const trailRef = useRef<HTMLElement>(null);
   const prevLen = useRef(trail.length);
+  const projectRef = useRef(project);
+  projectRef.current = project;
+  const hasView = useRef(lineup != null);
   useEffect(() => {
     const params = new URLSearchParams({ window: windowId });
-    if (project) params.set("project", project);
-    const ranges = trailRanges(trail);
-    if (ranges) params.set("ranges", ranges);
     let cancelled = false;
-    setLoading(true);
+    if (!hasView.current) setLoading(true);
     fetch(`/api/optagent/v1/summary?${params.toString()}`)
       .then((response) => response.json())
       .then((data: SummaryDoc) => {
-        if (!cancelled && data.lineup) setView(data.lineup);
+        if (!cancelled && data.lineup) {
+          hasView.current = true;
+          setView(withProjectSessions(data.lineup, projectRef.current));
+        }
       })
       .catch(() => undefined)
       .finally(() => {
@@ -2394,7 +2410,39 @@ function LineupSummary({ lineup }: { lineup?: LineupDoc }) {
     return () => {
       cancelled = true;
     };
-  }, [windowId, project, trail]);
+  }, [windowId]);
+  useEffect(() => {
+    setView((current) => {
+      if (!current?.sessions_by_project) return current;
+      const sessions = sessionsFor(current, project);
+      return sessions === current.sessions ? current : { ...current, sessions };
+    });
+  }, [project]);
+  useEffect(() => {
+    const wanted = trailRanges(trail);
+    if (!wanted || !view?.timeline) return;
+    const known = new Set(view.timeline.bins.map((bin) => `${bin.start}:${bin.end}`));
+    for (const bin of view.ranges ?? []) known.add(`${bin.start}:${bin.end}`);
+    const missing = wanted.split(",").filter((part) => part && !known.has(part));
+    if (!missing.length) return;
+    let cancelled = false;
+    fetch(`/api/optagent/v1/summary_ranges?ranges=${encodeURIComponent(missing.join(","))}`)
+      .then((response) => response.json())
+      .then((data: { ranges?: TimelineBin[] }) => {
+        const ranges = data.ranges;
+        if (cancelled || !Array.isArray(ranges) || !ranges.length) return;
+        setView((latest) => {
+          if (!latest) return latest;
+          const have = new Set((latest.ranges ?? []).map((bin) => `${bin.start}:${bin.end}`));
+          const extra = ranges.filter((bin) => !have.has(`${bin.start}:${bin.end}`));
+          return extra.length ? { ...latest, ranges: [...(latest.ranges ?? []), ...extra] } : latest;
+        });
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [trail, view?.timeline, view?.ranges]);
   useEffect(() => {
     const wanted = projectFromTrail(trail);
     setProject((current) => (current === wanted ? current : wanted));

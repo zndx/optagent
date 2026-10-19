@@ -778,22 +778,65 @@ def _sessions_origin(runtime) -> dict:
 
 
 def _summary_cache_query(raw: str, snapshot_id: str) -> str:
-    """Cache key for one lineup. The default window is omitted so both URLs match."""
+    """One lineup per snapshot and window.
+
+    Project, term, table, and bin choices are not part of the key. Those
+    panels are already in the document, so a new path does not rebuild it.
+    """
 
     parsed = urllib.parse.parse_qs(raw)
     window = (parsed.get("window") or ["365d"])[0]
-    project = (parsed.get("project") or [""])[0]
-    ranges = _summary_ranges((parsed.get("ranges") or [""])[0])
-    items: list[tuple[str, str]] = []
+    items = [("kind", "lineup")]
     if snapshot_id:
         items.append(("snapshot", snapshot_id))
     if window != "365d":
         items.append(("window", window))
-    if project:
-        items.append(("project", project))
+    return urllib.parse.urlencode(items)
+
+
+def _summary_range_query(raw: str, snapshot_id: str) -> str:
+    """A bin that is not in the open window. The ontology is not in this object."""
+
+    parsed = urllib.parse.parse_qs(raw)
+    ranges = _summary_ranges((parsed.get("ranges") or [""])[0])
+    items = [("kind", "ranges")]
+    if snapshot_id:
+        items.append(("snapshot", snapshot_id))
     if ranges:
         items.append(("ranges", ",".join(f"{start}:{end}" for start, end in ranges)))
     return urllib.parse.urlencode(items)
+
+
+_SESSION_CACHE: dict[int, dict[str, list]] = {}
+
+
+def _sessions_by_project(spans: list) -> dict[str, list]:
+    """Admitted passages for every project. Reused across windows of one snapshot."""
+
+    cached = _SESSION_CACHE.get(id(spans))
+    if cached is not None:
+        return cached
+    from optagent.lineup import session_items
+
+    names = {
+        str((span.get("resource") or {}).get("openinference.project.name") or "")
+        for span in spans
+        if isinstance(span, dict)
+    }
+    names.discard("")
+    loaded = {name: session_items(spans, name) for name in sorted(names)}
+    _SESSION_CACHE.clear()
+    _SESSION_CACHE[id(spans)] = loaded
+    return loaded
+
+
+def _summary_range_document(runtime, raw_query: str) -> dict:
+    from optagent.lineup import range_slice
+
+    query = urllib.parse.parse_qs(raw_query)
+    ranges = _summary_ranges((query.get("ranges") or [""])[0])
+    spans = _loaded_spans(runtime)
+    return {"ranges": [range_slice(spans, start, end) for start, end in ranges]}
 
 
 def _summary_document(runtime, raw_query: str) -> dict:
@@ -831,10 +874,17 @@ def _summary_document(runtime, raw_query: str) -> dict:
         window=window,
         archive=archived,
         live=live,
-        project=project,
+        project="",
         product=product,
-        ranges=ranges,
+        ranges=[],
     )
+    document["lineup"]["sessions_by_project"] = _sessions_by_project(spans)
+    if project:
+        document["lineup"]["sessions"] = document["lineup"]["sessions_by_project"].get(project, [])
+    if ranges:
+        from optagent.lineup import range_slice
+
+        document["lineup"]["ranges"] = [range_slice(spans, start, end) for start, end in ranges]
     return document
 
 
@@ -982,14 +1032,25 @@ def response_for(
     if parsed.path == "/api/optagent/v1/snapshot_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_origin_snapshot(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary_origin":
-        return 200, "application/json; charset=utf-8", json.dumps(_summary_document(runtime, parsed.query)).encode(), extra
+        kind = (urllib.parse.parse_qs(parsed.query).get("kind") or ["lineup"])[0]
+        if kind == "ranges":
+            payload = _summary_range_document(runtime, parsed.query)
+        else:
+            payload = _summary_document(runtime, parsed.query)
+        return 200, "application/json; charset=utf-8", json.dumps(payload).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary":
         cache_query = _summary_cache_query(parsed.query, _loaded_snapshot_id())
         cached = _cached_body("summary_origin", cache_query, timeout=30)
-        if not cached or b'"lineup"' not in cached:
+        if not cached or b'"lineup"' not in cached or b'"sessions_by_project"' not in cached:
             cached = json.dumps(_summary_document(runtime, cache_query)).encode()
+        return 200, "application/json; charset=utf-8", cached, extra
+    if parsed.path == "/api/optagent/v1/summary_ranges":
+        cache_query = _summary_range_query(parsed.query, _loaded_snapshot_id())
+        cached = _cached_body("summary_origin", cache_query, timeout=30)
+        if not cached or b'"ranges"' not in cached:
+            cached = json.dumps(_summary_range_document(runtime, cache_query)).encode()
         return 200, "application/json; charset=utf-8", cached, extra
     if parsed.path == "/api/optagent/v1/sessions":
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", _sessions_origin)).encode(), extra
