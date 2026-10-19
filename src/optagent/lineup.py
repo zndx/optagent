@@ -607,7 +607,7 @@ def build_lineup(
     if product and product.get("id") and product.get("data_uri"):
         body["product"] = {
             "id": str(product.get("id") or ""),
-            "iteration": str(product.get("iteration") or ""),
+            "version": str(product.get("version") or ""),
             "data_uri": str(product.get("data_uri") or ""),
             "tx_id": str(product.get("tx_id") or ""),
             "rows": str(product.get("rows") or ""),

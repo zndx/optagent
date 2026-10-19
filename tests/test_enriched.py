@@ -1,10 +1,12 @@
 # Copyright 2026 zndx
 # SPDX-License-Identifier: Apache-2.0
 
+import io
 import json
+import tarfile
 from pathlib import Path
 
-from optagent.enriched import PRODUCT_ID, build_manifest, product_facts, project_rows, publish
+from optagent.enriched import PRODUCT_ID, build_manifest, pack_snapshot, product_facts, project_rows, publish
 from optagent.lineup import build_lineup
 from optagent.phoenix_spans import make_span, write_jsonl
 
@@ -104,22 +106,22 @@ def test_baseline_keeps_short_links_and_omits_scores(tmp_path: Path) -> None:
     assert replay["typesafe_input_tokens"] == 40
     assert "factors" not in replay
     manifest = build_manifest(rows, snapshot_id, unreadable=unreadable)
-    assert manifest["baseline"] is True
-    assert manifest["iteration"] == 1
+    assert manifest["snapshot_id"] == "snap-1"
     assert manifest["links"] == 1
     assert manifest["overwatch_sessions"] == 1
     assert "factors" not in manifest
-    stored = {}
+    stored: dict[str, bytes] = {}
 
-    def put(objects: dict[str, bytes]) -> None:
-        stored.update(objects)
+    def put(uri: str, body: bytes) -> None:
+        stored["uri"] = uri.encode()
+        stored["body"] = body
 
     def review(facts: dict, summary: str) -> dict:
         assert facts["id"] == PRODUCT_ID
-        assert facts["data_uri"] == "s3://signals-dataproducts/optagent/tracing/enriched/1"
-        assert facts["iteration"] == "1"
-        assert facts["baseline"] == "true"
-        assert "no prior product version" in facts["delta"]
+        assert facts["data_uri"] == "s3://signals-dataproducts/optagent/snapshots/snap-1.tar.gz"
+        assert facts["snapshot_id"] == "snap-1"
+        assert facts["kind"] == "snapshot"
+        assert "parent none" in facts["delta"]
         assert summary == facts["quality"]
         assert all(not str(value).startswith("/") for value in facts.values())
         assert "rustfsadmin" not in json.dumps(facts)
@@ -128,20 +130,24 @@ def test_baseline_keeps_short_links_and_omits_scores(tmp_path: Path) -> None:
     result = publish(root, put=put, review=review, endpoint="http://127.0.0.1:9010")
     assert result["rows"] == 2
     assert result["links"] == 1
-    body = json.loads(stored["traces.jsonl"].splitlines()[0])
-    assert body["links"][0]["text"] == "provenance"
-    document = json.loads((root / "signals-snapshot.json").read_text(encoding="utf-8"))
-    assert document["summary"]["product.id"] == PRODUCT_ID
-    assert document["summary"]["product.iteration"] == "1"
+    assert stored["uri"].decode().endswith("/snap-1.tar.gz")
+    with tarfile.open(fileobj=io.BytesIO(stored["body"]), mode="r:gz") as tar:
+        document = json.loads(tar.extractfile("signals-snapshot.json").read().decode())
+        spans = tar.extractfile("projects/hermes/spans.jsonl").read().decode().splitlines()
+    assert document["summary"]["product.version"] == "snap-1"
     assert document["summary"]["product.tx_id"].endswith("0001")
+    linked = json.loads(next(line for line in spans if "provenance" in line))
+    assert linked["attributes"]["sdg.spans"][0]["text"] == "provenance"
+    assert pack_snapshot(root)
     lineup = build_lineup([], now_ms=1, product={
         "id": document["summary"]["product.id"],
-        "iteration": document["summary"]["product.iteration"],
+        "version": document["summary"]["product.version"],
         "data_uri": document["summary"]["product.data_uri"],
         "tx_id": document["summary"]["product.tx_id"],
         "rows": document["summary"]["product.rows"],
         "links": document["summary"]["product.links"],
     })
-    assert lineup["product"]["data_uri"].endswith("/enriched/1")
+    assert lineup["product"]["version"] == "snap-1"
+    assert lineup["product"]["data_uri"].endswith("/snap-1.tar.gz")
     facts = product_facts(manifest, lineup["product"]["data_uri"])
-    assert facts["run.EnrichedTraceProduct/1.data_uri"].endswith("/enriched/1")
+    assert facts["run.Snapshot/snap-1.data_uri"].endswith("/snap-1.tar.gz")

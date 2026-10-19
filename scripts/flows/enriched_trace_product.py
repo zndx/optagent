@@ -1,9 +1,10 @@
 # Copyright 2026 zndx
 # SPDX-License-Identifier: Apache-2.0
-"""Publish iteration 1 of optagent.tracing.enriched.
+"""Publish the portable snapshot as optagent.traces.snapshot.
 
-The object is the baseline. A later iteration writes a new prefix and a new
-tx. It does not replace this one. Run against the installed snapshot:
+Enriched term links are already on the spans in the archive. The snapshot
+id is the version. A later snapshot is a new object. Run against the
+installed snapshot:
 
   python -m optagent.enriched /home/rch/local/src/zndx/optagent/.devenv/state/signals-snapshot
 

@@ -821,7 +821,7 @@ def response_for(
         if summary.get("product.id") and summary.get("product.data_uri"):
             product = {
                 "id": summary.get("product.id"),
-                "iteration": summary.get("product.iteration") or "",
+                "version": summary.get("product.version") or "",
                 "data_uri": summary.get("product.data_uri"),
                 "tx_id": summary.get("product.tx_id") or "",
                 "rows": summary.get("product.rows") or "",

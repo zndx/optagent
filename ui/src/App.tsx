@@ -97,7 +97,7 @@ type LineupDoc = {
   published: string[];
   product?: {
     id: string;
-    iteration: string;
+    version: string;
     data_uri: string;
     tx_id?: string;
     rows?: string;
@@ -1955,11 +1955,11 @@ function TrailPanels({
                 <PropTable rows={statRows(timeline.totals)} />
                 {view.product?.id ? (
                   <>
-                    <p className="sum-section">Baseline.</p>
+                    <p className="sum-section">Snapshot.</p>
                     <PropTable
                       rows={[
                         ["product", view.product.id],
-                        ["iteration", view.product.iteration || "1"],
+                        ["version", view.product.version || ""],
                         ["rows", view.product.rows || ""],
                         ["links", view.product.links || ""],
                         ["data", view.product.data_uri],

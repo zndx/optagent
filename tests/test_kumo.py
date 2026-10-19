@@ -46,7 +46,7 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "kind: \"segment\"" in source
     assert "item.genus_iri" in source
     assert "item.overwatch" in source
-    assert "Baseline." in source
+    assert "Snapshot." in source
     assert 'id="terminal"' in source
     assert "Ghostty not connected" in source
     assert "height={28}" in source

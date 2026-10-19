@@ -1,52 +1,52 @@
 # Copyright 2026 zndx
 # SPDX-License-Identifier: Apache-2.0
-"""First iteration of the enriched-trace data product.
+"""Ship a portable signals-snapshot as the versioned trace product.
 
-``optagent.tracing.enriched`` is a Signals warehouse product. Iteration 1 is
-the baseline: readable passages the aperture admitted, with the short term
-links the classifier kept. Later iterations, including UXR factors, are new
-objects under the same product id. This module does not write a second
-warehouse and does not spawn an ACP agent.
+Enriched term links live on the spans inside the archive. The snapshot id
+is the version. A later snapshot is a new object. This module does not
+write a second warehouse and does not spawn an ACP agent.
 """
 
 from __future__ import annotations
 
+import io
 import json
 import os
 import subprocess
+import tarfile
 from pathlib import Path
 from typing import Any, Callable
 
 from optagent.backfill import TAU, readable_segment, span_ms, span_text
 from optagent.phoenix_spans import read_jsonl
 
-PRODUCT_ID = "optagent.tracing.enriched"
-ITERATION = 1
-FLOW_NAME = "EnrichedTraceProduct"
-DATA_ROOT = "s3://signals-dataproducts/optagent/tracing/enriched"
+PRODUCT_ID = "optagent.traces.snapshot"
+FLOW_NAME = "Snapshot"
+DATA_ROOT = "s3://signals-dataproducts/optagent/snapshots"
 SDG_IRI = "https://signals.zndx.org/sdg#"
 SPEC_ID = "signals.spec.warehouse_product"
 
 CATALOG = {
     "id": PRODUCT_ID,
     "peer": "optagent",
-    "title": "Enriched agent traces",
-    "kind": "trace",
+    "title": "Portable trace snapshot",
+    "kind": "snapshot",
     "leaf": "root.platform",
     "spec_id": SPEC_ID,
     "agent_focus": (
-        "Iteration 1 is the baseline enriched-trace projection. "
+        "The portable signals-snapshot is the versioned product. "
+        "Enriched term links are attributes on the spans inside that archive. "
         "Quality is the count of readable admitted passages and the short links they carry. "
-        "Lineage is the source snapshot id, the aperture tau, and the TypeSafe model when one was called. "
-        "Delta for this tx is the first iteration, so there is no prior product version. "
-        "Later iterations keep this object and may add factor fields. A missing factor is not a score. "
-        "Overwatch sessions are part of the observation. Nominal means the object matches the projection."
+        "Lineage is this snapshot id, its parent snapshot id, the aperture tau, and the TypeSafe model when one was called. "
+        "Delta is this snapshot id against its parent. "
+        "A later snapshot is a new object under the same product id. A missing factor is not a score. "
+        "Nominal means the archive contains those spans."
     ),
 }
 
 
-def data_uri(iteration: int = ITERATION) -> str:
-    return f"{DATA_ROOT}/{iteration}"
+def data_uri(snapshot_id: str) -> str:
+    return f"{DATA_ROOT}/{snapshot_id}.tar.gz"
 
 
 def _link(item: dict) -> dict | None:
@@ -102,7 +102,6 @@ def project_rows(spans: list[dict], snapshot_id: str) -> tuple[list[dict], int]:
                 links.append(link)
         row: dict[str, Any] = {
             "product_id": PRODUCT_ID,
-            "iteration": ITERATION,
             "snapshot_id": snapshot_id,
             "project": str(resource.get("openinference.project.name") or ""),
             "session_id": str(attributes.get("session.id") or ""),
@@ -136,15 +135,14 @@ def project_rows(spans: list[dict], snapshot_id: str) -> tuple[list[dict], int]:
     return rows, unreadable
 
 
-def build_manifest(rows: list[dict], snapshot_id: str, *, unreadable: int) -> dict:
+def build_manifest(rows: list[dict], snapshot_id: str, *, unreadable: int, parent_snapshot_id: str = "") -> dict:
     linked_rows = [row for row in rows if row["links"]]
     overwatch = {row["session_id"] for row in rows if row.get("overwatch_reason")}
     models = sorted({row["typesafe_model"] for row in rows if row.get("typesafe_model")})
     return {
         "product_id": PRODUCT_ID,
-        "iteration": ITERATION,
-        "baseline": True,
         "snapshot_id": snapshot_id,
+        "parent_snapshot_id": parent_snapshot_id,
         "rows": len(rows),
         "linked_rows": len(linked_rows),
         "links": sum(len(row["links"]) for row in rows),
@@ -153,18 +151,19 @@ def build_manifest(rows: list[dict], snapshot_id: str, *, unreadable: int) -> di
         "admitted_unreadable": unreadable,
         "tau": TAU,
         "models": models,
-        "contract_note": (
-            "Iteration 1 is the baseline. Later iterations keep this object and may add "
-            "factor fields. A missing factor is not a score."
-        ),
     }
 
 
-def _encode(rows: list[dict], manifest: dict) -> dict[str, bytes]:
-    lines = [json.dumps(row, ensure_ascii=False, sort_keys=True) for row in rows]
-    body = ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
-    listing = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode("utf-8")
-    return {"traces.jsonl": body, "manifest.json": listing}
+def pack_snapshot(snapshot: Path) -> bytes:
+    """Gzip tar of the snapshot directory. Enriched spans travel inside it."""
+
+    root = Path(snapshot)
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and not path.name.startswith("."):
+                tar.add(path, arcname=str(path.relative_to(root)))
+    return buf.getvalue()
 
 
 def _git_sha() -> str:
@@ -182,29 +181,29 @@ def _git_sha() -> str:
 def product_facts(manifest: dict, uri: str, *, code_sha: str = "", endpoint: str = "http://127.0.0.1:9010") -> dict[str, str]:
     """Scalar details facts. Local paths are not facts."""
 
-    iteration = str(manifest["iteration"])
+    version = str(manifest["snapshot_id"])
+    parent = str(manifest.get("parent_snapshot_id") or "")
     models = ",".join(manifest.get("models") or []) or "none"
     quality = (
-        f"iteration {iteration} baseline: {manifest['rows']} readable admitted passages, "
+        f"snapshot {version} contains {manifest['rows']} readable admitted passages, "
         f"{manifest['linked_rows']} with term links, {manifest['links']} links, "
         f"{manifest['overwatch_sessions']} overwatch sessions, "
         f"{manifest['admitted_unreadable']} unreadable admissions excluded"
     )
     lineage = (
-        f"snapshot {manifest['snapshot_id']} tau {manifest['tau']} model {models}"
+        f"snapshot {version} parent {parent or 'none'} tau {manifest['tau']} model {models}"
         + (f" code {code_sha}" if code_sha else "")
     )
-    delta = f"iteration {iteration} baseline; no prior product version"
+    delta = f"snapshot {version} parent {parent or 'none'}"
     facts = dict(CATALOG)
     facts.update(
         {
-            "iteration": iteration,
-            "baseline": "true",
-            "maturity": "baseline",
-            "snapshot_id": str(manifest["snapshot_id"]),
+            "maturity": "versioned",
+            "snapshot_id": version,
+            "parent_snapshot_id": parent,
             "data_uri": uri,
             "latest_data_uri": uri,
-            "latest_iteration": iteration,
+            "latest_snapshot_id": version,
             "flow_name": FLOW_NAME,
             "rows": str(manifest["rows"]),
             "linked_rows": str(manifest["linked_rows"]),
@@ -226,9 +225,9 @@ def product_facts(manifest: dict, uri: str, *, code_sha: str = "", endpoint: str
     )
     if code_sha:
         facts["code_sha"] = code_sha
-    prefix = f"run.{FLOW_NAME}/{iteration}"
+    prefix = f"run.{FLOW_NAME}/{version}"
     for name in ("data_uri", "snapshot_id", "rows", "links", "quality"):
-        facts[f"{prefix}.{name}"] = facts[name if name != "snapshot_id" else "snapshot_id"]
+        facts[f"{prefix}.{name}"] = facts[name]
     for value in facts.values():
         text = str(value)
         if text.startswith("/") or text.startswith("file:"):
@@ -246,44 +245,43 @@ def _split_uri(uri: str) -> tuple[str, str]:
     return bucket, key
 
 
-def put_rustfs(objects: dict[str, bytes], *, endpoint: str, prefix: str) -> None:
-    """PUT the iteration objects. Lab RustFS credentials are the documented defaults."""
+def put_rustfs(body: bytes, *, endpoint: str, uri: str) -> None:
+    """PUT one portable snapshot. Lab RustFS credentials are the documented defaults."""
 
     if "9010" not in endpoint and "rustfs" not in endpoint.lower():
         raise RuntimeError(f"S3 endpoint {endpoint!r} is not RustFS")
     access = os.environ.get("AWS_ACCESS_KEY_ID") or "rustfsadmin"
     secret = os.environ.get("AWS_SECRET_ACCESS_KEY") or "rustfsadmin"
-    bucket, key_prefix = _split_uri(prefix.rstrip("/"))
+    bucket, key = _split_uri(uri)
     import tempfile
 
     with tempfile.TemporaryDirectory() as tmp:
-        for name, body in objects.items():
-            path = Path(tmp) / name
-            path.write_bytes(body)
-            proc = subprocess.run(
-                [
-                    "rclone",
-                    "copyto",
-                    str(path),
-                    f":s3:{bucket}/{key_prefix}/{name}",
-                    "--s3-provider",
-                    "Other",
-                    "--s3-endpoint",
-                    endpoint,
-                    "--s3-access-key-id",
-                    access,
-                    "--s3-secret-access-key",
-                    secret,
-                    "--s3-force-path-style",
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if proc.returncode != 0:
-                detail = (proc.stderr or "").strip().splitlines()
-                tail = detail[-1][:300] if detail else f"exit {proc.returncode}"
-                raise RuntimeError(f"RustFS write failed: {tail}")
+        path = Path(tmp) / "snapshot.tar.gz"
+        path.write_bytes(body)
+        proc = subprocess.run(
+            [
+                "rclone",
+                "copyto",
+                str(path),
+                f":s3:{bucket}/{key}",
+                "--s3-provider",
+                "Other",
+                "--s3-endpoint",
+                endpoint,
+                "--s3-access-key-id",
+                access,
+                "--s3-secret-access-key",
+                secret,
+                "--s3-force-path-style",
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            detail = (proc.stderr or "").strip().splitlines()
+            tail = detail[-1][:300] if detail else f"exit {proc.returncode}"
+            raise RuntimeError(f"RustFS write failed: {tail}")
 
 
 def _signals_python(root: Path) -> list[str]:
@@ -402,8 +400,9 @@ def stamp_snapshot(snapshot: Path, facts: dict[str, str], tx_id: str) -> None:
     path = snapshot / "signals-snapshot.json"
     document = json.loads(path.read_text(encoding="utf-8"))
     summary = document.setdefault("summary", {})
+    summary.pop("product.iteration", None)
     summary["product.id"] = PRODUCT_ID
-    summary["product.iteration"] = str(facts["iteration"])
+    summary["product.version"] = str(facts["snapshot_id"])
     summary["product.data_uri"] = facts["data_uri"]
     summary["product.tx_id"] = tx_id
     summary["product.rows"] = str(facts["rows"])
@@ -430,19 +429,26 @@ def publish(
     endpoint: str | None = None,
     stamp: bool = True,
 ) -> dict:
-    """Write iteration 1 to RustFS and record the product. Tests inject put and review."""
+    """Upload the portable snapshot and record it. Tests inject put and review.
+
+    ``put`` receives ``(uri, body)``. The body is the gzip tar. Term links
+    are already on the spans in that tar.
+    """
 
     root = Path(snapshot)
+    document = json.loads((root / "signals-snapshot.json").read_text(encoding="utf-8"))
     snapshot_id, spans = load_snapshot(root)
+    parent = str(document.get("parent-snapshot-id") or "")
     rows, unreadable = project_rows(spans, snapshot_id)
-    manifest = build_manifest(rows, snapshot_id, unreadable=unreadable)
-    uri = data_uri(ITERATION)
-    objects = _encode(rows, manifest)
+    manifest = build_manifest(rows, snapshot_id, unreadable=unreadable, parent_snapshot_id=parent)
+    uri = data_uri(snapshot_id)
     endpoint = endpoint or os.environ.get("METAFLOW_S3_ENDPOINT_URL") or "http://127.0.0.1:9010"
-    writer = put or (lambda bodies: put_rustfs(bodies, endpoint=endpoint, prefix=uri))
-    writer(objects)
+    writer = put or (lambda target, body: put_rustfs(body, endpoint=endpoint, uri=target))
     code_sha = _git_sha()
     facts = product_facts(manifest, uri, code_sha=code_sha, endpoint=endpoint)
+    if stamp:
+        stamp_snapshot(root, facts, "")
+    writer(uri, pack_snapshot(root))
     summary = facts["quality"]
     recorded = review(facts, summary) if review is not None else review_via_signals(facts, summary=summary)
     tx_id = str(recorded.get("tx_id") or "")
@@ -450,9 +456,10 @@ def publish(
         raise RuntimeError("product review did not return a tx_id")
     if stamp:
         stamp_snapshot(root, facts, tx_id)
+        writer(uri, pack_snapshot(root))
     return {
         "product_id": PRODUCT_ID,
-        "iteration": ITERATION,
+        "snapshot_id": snapshot_id,
         "data_uri": uri,
         "tx_id": tx_id,
         "rows": manifest["rows"],
@@ -471,7 +478,7 @@ def main(argv: list[str] | None = None) -> int:
     snapshot = Path(args[0]) if args else store_root()
     result = publish(snapshot)
     print(
-        f"{result['product_id']} iteration {result['iteration']} "
+        f"{result['product_id']} snapshot {result['snapshot_id']} "
         f"tx {result['tx_id']} rows {result['rows']} links {result['links']} "
         f"{result['data_uri']}"
     )
