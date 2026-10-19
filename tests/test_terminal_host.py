@@ -1,11 +1,24 @@
 # Copyright 2026 zndx
 # SPDX-License-Identifier: Apache-2.0
 
+import json
+import os
+
 from optagent import terminal_host
 from optagent.terminal_host import create_session, list_sessions, move_session
 
 
 def _reset() -> None:
+    for name in (
+        "OPTAGENT_MODEL",
+        "OPTAGENT_MODEL_NAME",
+        "OPTAGENT_MODEL_BASE_URL",
+        "OPTAGENT_MODEL_API_KEY_ENV",
+        "OPTAGENT_MODEL_BACKEND",
+        "OPTAGENT_MODELS_JSON",
+        "OPTAGENT_MODEL_API_KEY",
+    ):
+        os.environ.pop(name, None)
     for session in list(terminal_host._SESSIONS.values()):
         proc = session._proc
         if proc is not None and proc.poll() is None:
@@ -57,3 +70,92 @@ def test_missing_grok_still_records_a_server_session(monkeypatch, tmp_path) -> N
     assert list_sessions("archive")[0]["id"] == created["id"]
     text = __import__("optagent.terminal_host", fromlist=["get_session"]).get_session(created["id"]).read(0)
     assert "just grok-build" in text["data"]
+
+
+def _fake_grok(tmp_path, monkeypatch):
+    binary = tmp_path / "grok"
+    binary.write_text("#!/bin/sh\nexec sleep 30\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.setattr("optagent.terminal_host.grok_bin", lambda: binary)
+    monkeypatch.setattr("optagent.terminal_host.shutil.which", lambda name: None)
+
+
+def test_a_configured_endpoint_is_written_without_the_api_key(monkeypatch, tmp_path) -> None:
+    _reset()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv("OPTAGENT_MODEL_BASE_URL", "http://127.0.0.1:8000/v1")
+    monkeypatch.setenv("OPTAGENT_MODEL_NAME", "qwen")
+    monkeypatch.setenv("OPTAGENT_MODEL_API_KEY", "super-secret-value")
+    _fake_grok(tmp_path, monkeypatch)
+    session_id = "11111111-1111-4111-8111-111111111111"
+    created = create_session("current", session_id)
+    assert created["status"] == "host"
+    assert created["detail"].startswith("optagent")
+    assert "super-secret-value" not in created["detail"]
+    command = first_command(session_id)
+    assert command[command.index("-m") + 1] == "optagent"
+    assert "super-secret-value" not in command
+    config = (tmp_path / "terminals" / session_id / "grok-home" / "config.toml").read_text(encoding="utf-8")
+    assert 'base_url = "http://127.0.0.1:8000/v1"' in config
+    assert 'model = "qwen"' in config
+    assert 'env_key = "OPTAGENT_MODEL_API_KEY"' in config
+    assert "super-secret-value" not in config
+    session = terminal_host.get_session(session_id)
+    assert session.child_env["GROK_HOME"].endswith("/grok-home")
+    assert session.child_env["OPTAGENT_MODEL_API_KEY"] == "super-secret-value"
+    assert session._proc is not None
+    session._proc.kill()
+    session._proc.wait(timeout=2)
+
+
+def test_models_json_selects_one_endpoint(monkeypatch, tmp_path) -> None:
+    _reset()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv(
+        "OPTAGENT_MODELS_JSON",
+        json.dumps(
+            [
+                {"id": "local", "model": "qwen", "base_url": "http://127.0.0.1:8000/v1"},
+                {"id": "hosted", "model": "grok-4", "base_url": "https://api.example.com/v1", "backend": "responses"},
+            ]
+        ),
+    )
+    monkeypatch.setenv("OPTAGENT_MODEL", "hosted")
+    _fake_grok(tmp_path, monkeypatch)
+    session_id = "22222222-2222-4222-8222-222222222222"
+    created = create_session("current", session_id)
+    assert created["detail"].startswith("hosted")
+    config = (tmp_path / "terminals" / session_id / "grok-home" / "config.toml").read_text(encoding="utf-8")
+    assert "https://api.example.com/v1" in config
+    assert "127.0.0.1:8000" not in config
+    assert 'api_backend = "responses"' in config
+    session = terminal_host.get_session(session_id)
+    assert session._proc is not None
+    session._proc.kill()
+    session._proc.wait(timeout=2)
+
+
+def test_an_unknown_model_does_not_spawn(monkeypatch, tmp_path) -> None:
+    _reset()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv("OPTAGENT_MODEL", "missing")
+    monkeypatch.setenv(
+        "OPTAGENT_MODELS_JSON",
+        json.dumps([{"id": "local", "base_url": "http://127.0.0.1:8000/v1"}]),
+    )
+    _fake_grok(tmp_path, monkeypatch)
+    created = create_session("scratch", "33333333-3333-4333-8333-333333333333")
+    assert created["status"] == "model-config"
+    assert "missing" in created["detail"]
+    assert terminal_host.get_session(created["id"])._proc is None
+
+
+def test_a_key_in_the_model_url_is_rejected(monkeypatch, tmp_path) -> None:
+    _reset()
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv("OPTAGENT_MODEL_BASE_URL", "http://user:super-secret-value@127.0.0.1:8000/v1")
+    _fake_grok(tmp_path, monkeypatch)
+    created = create_session("archive", "44444444-4444-4444-8444-444444444444")
+    assert created["status"] == "model-config"
+    assert "super-secret-value" not in created["detail"]
+    assert terminal_host.get_session(created["id"])._proc is None

@@ -62,6 +62,30 @@ environment_variables:
     default: "postgres://127.0.0.1:5599/optagent"
     description: "PostgreSQL that loads impala_fdw. Devenv listens on port 5599."
     required: false
+  OPTAGENT_MODEL:
+    default: ""
+    description: "Which terminal model id to run. Empty uses the sole configured endpoint, or Grok's built-in catalog when no base URL is set."
+    required: false
+  OPTAGENT_MODEL_NAME:
+    default: ""
+    description: "Model id sent to the endpoint. Empty sends the endpoint id."
+    required: false
+  OPTAGENT_MODEL_BASE_URL:
+    default: ""
+    description: "OpenAI-compatible /v1 base URL for the Grok Build harness. Empty keeps Grok's built-in catalog."
+    required: false
+  OPTAGENT_MODEL_API_KEY_ENV:
+    default: "OPTAGENT_MODEL_API_KEY"
+    description: "Name of the environment variable that holds the endpoint API key. The value is not written into the session."
+    required: false
+  OPTAGENT_MODEL_BACKEND:
+    default: "chat_completions"
+    description: "Grok API backend: chat_completions, responses, or messages."
+    required: false
+  OPTAGENT_MODELS_JSON:
+    default: ""
+    description: "JSON list of model endpoints. When set, it replaces terminal.models in config/base.conf. Select one with OPTAGENT_MODEL."
+    required: false
   IMPALA_HS2_HOST:
     default: ""
     description: "Impala HS2 host. Empty skips CREATE SERVER. Product auth is Kerberos."
