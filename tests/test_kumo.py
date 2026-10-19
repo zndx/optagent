@@ -50,13 +50,18 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert 'id="terminal"' in source
     assert "term-page" in source
     assert "New session" in source
+    assert 'aria-label="Ask"' in source
+    assert "Ask (Ctrl+E)" in source
+    assert "icon-ask" in source
+    assert "optagent-ask-open" in source
     assert "connecting…" in source
     assert "No server session" not in source
     assert "optagent-terminal-session:" in source
     assert "getRandomValues" in source
-    assert 'sum-group-title">ASK' in source
+    assert 'className="ask-title">Ask' in source
     assert "height={28}" in source
     css = (ROOT / "ui" / "src" / "index.css").read_text(encoding="utf-8")
+    assert "1px solid var(--color-kumo-hairline" in css
     assert "@cloudflare/kumo/styles/tailwind" in css
     assert "theme-keiretsu.css" in css
     assert ".brand-logo" in css

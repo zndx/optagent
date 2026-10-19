@@ -227,6 +227,13 @@ export default function App() {
   const [sessionsDoc, setSessionsDoc] = useState<SessionsDoc>({});
   const [busy, setBusy] = useState(true);
   const [error, setError] = useState("");
+  const [askOpen, setAskOpen] = useState(() => {
+    try {
+      return localStorage.getItem("optagent-ask-open") !== "0";
+    } catch {
+      return true;
+    }
+  });
 
   function applyWorkspace(data: Workspace) {
     setWorkspace(data);
@@ -288,6 +295,37 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "e") {
+        event.preventDefault();
+        setAskOpen((open) => {
+          const next = !open;
+          try {
+            localStorage.setItem("optagent-ask-open", next ? "1" : "0");
+          } catch {
+            /* the view still toggles */
+          }
+          return next;
+        });
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const toggleAsk = () => {
+    setAskOpen((open) => {
+      const next = !open;
+      try {
+        localStorage.setItem("optagent-ask-open", next ? "1" : "0");
+      } catch {
+        /* the view still toggles */
+      }
+      return next;
+    });
+  };
+
   const mode = workspace?.color_mode === "light" ? "light" : "dark";
   const logoHref =
     mode === "light" && workspace?.brand.logo_href_light
@@ -315,6 +353,16 @@ export default function App() {
           ))}
         </nav>
         <div className="chrome-right">
+          <button
+            type="button"
+            className={askOpen ? "chrome-icon-btn active" : "chrome-icon-btn"}
+            aria-label="Ask"
+            aria-pressed={askOpen}
+            title="Ask (Ctrl+E)"
+            onClick={toggleAsk}
+          >
+            <AskIcon />
+          </button>
           <a
             className={route === "/settings" ? "chrome-icon-btn active" : "chrome-icon-btn"}
             href="/settings"
@@ -347,7 +395,7 @@ export default function App() {
             onLens={setLens}
           />
         )}
-        {route === "/terminal" && <Terminal />}
+        {route === "/terminal" && <Terminal askOpen={askOpen} onAsk={toggleAsk} />}
         {route === "/settings" && (
           <Settings
             workspace={workspace}
@@ -2618,12 +2666,13 @@ function rememberSession(section: string): string {
   }
 }
 
-function Terminal() {
+function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
   const [section, setSection] = useState("current");
   const [sessions, setSessions] = useState<TermSession[]>([]);
   const [active, setActive] = useState("");
   const [status, setStatus] = useState("connecting…");
   const [ask, setAsk] = useState("");
+  const [asked, setAsked] = useState<string[]>([]);
   const [chart, setChart] = useState<number[]>([]);
   const cursor = useRef(0);
   const host = useRef<HTMLDivElement>(null);
@@ -2776,11 +2825,13 @@ function Terminal() {
   };
 
   const askSend = () => {
-    if (!active || !ask.trim()) return;
+    const text = ask.trim();
+    if (!active || !text) return;
+    setAsked((items) => [...items, text]);
     fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ data: ask.endsWith("\n") ? ask : `${ask}\n` }),
+      body: JSON.stringify({ data: text.endsWith("\n") ? text : `${text}\n` }),
     }).catch(() => undefined);
     setAsk("");
   };
@@ -2830,24 +2881,57 @@ function Terminal() {
         <p className="muted" style={{ margin: "0.35rem 0.6rem" }}>{status}</p>
         <div id="terminal" ref={host} />
       </section>
-      <aside className="term-ask" aria-label="Ask">
-        <div className="sum-group">
-          <div className="sum-group-title">ASK</div>
-          <textarea aria-label="Ask" value={ask} onChange={(event) => setAsk(event.target.value)} />
-          <button type="button" className="sum-week-btn" onClick={askSend}>Send</button>
-        </div>
-        <div className="sum-group">
-          <div className="sum-group-title">CHART</div>
+      <aside className="term-ask ask-panel" aria-label="Ask" hidden={!askOpen}>
+        <header className="ask-head">
+          <div>
+            <h2 className="ask-title">Ask</h2>
+            <p className="ask-context">Looking at /terminal · {section}</p>
+          </div>
+          <div className="ask-head-actions">
+            <button type="button" className="ask-icon-btn" aria-label="New conversation" title="New" onClick={() => setAsked([])}>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path fill="currentColor" d="M11 5h2v6h6v2h-6v6h-2v-6H5v-2h6V5z" />
+              </svg>
+            </button>
+            <button type="button" className="ask-icon-btn" aria-label="Close Ask" title="Close" onClick={onAsk}>
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+                <path fill="currentColor" d="M6.4 5L12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4z" />
+              </svg>
+            </button>
+          </div>
+        </header>
+        <div className="ask-log">
+          {asked.map((text, index) => (
+            <div key={index} className="ask-msg ask-user">{text}</div>
+          ))}
           {chart.length ? (
             <div className="term-chart" aria-label="Chart">
               {chart.map((value, index) => (
                 <i key={index} style={{ height: `${(value / max) * 100}%` }} />
               ))}
             </div>
-          ) : (
-            <p className="muted">No chart in this session.</p>
-          )}
+          ) : null}
         </div>
+        <form
+          className="ask-compose"
+          onSubmit={(event) => {
+            event.preventDefault();
+            askSend();
+          }}
+        >
+          <textarea
+            aria-label="Ask"
+            rows={3}
+            placeholder="Ask about what you are looking at…"
+            value={ask}
+            onChange={(event) => setAsk(event.target.value)}
+          />
+          <button type="submit" className="ask-icon-btn primary" aria-label="Send" title="Send">
+            <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+              <path fill="currentColor" d="M3 20.4V3.6L21.2 12 3 20.4zm2.5-3.3L15.6 12 5.5 6.9v3.6l5.4 1.5-5.4 1.5v3.6z" />
+            </svg>
+          </button>
+        </form>
       </aside>
     </div>
   );
@@ -2944,6 +3028,17 @@ function Settings({
         />
       </section>
     </section>
+  );
+}
+
+function AskIcon() {
+  return (
+    <svg className="icon-ask" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false">
+      <path
+        fill="currentColor"
+        d="M4 5a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H9.2L5 19.6V16H6a2 2 0 0 1-2-2V5zm3.2 3.25h9.6v1.3H7.2V8.25zm0 3.1h6.8v1.3H7.2v-1.3z"
+      />
+    </svg>
   );
 }
 

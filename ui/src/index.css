@@ -36,25 +36,30 @@
 }
 .atelier-chrome .brand:hover { color: var(--chrome-text); }
 .brand-name { color: var(--chrome-text); }
-.chrome-right { display: flex; align-items: center; gap: 4px; }
+.chrome-right { display: flex; align-items: center; gap: 8px; }
 .atelier-chrome .chrome-icon-btn {
-  color: var(--chrome-dim);
+  color: var(--text-color-kumo-subtle, var(--chrome-dim));
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 36px;
-  min-height: 32px;
-  padding: 6px 10px;
-  border: 0;
-  border-radius: 4px;
+  width: 30px;
+  height: 30px;
+  min-width: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid var(--color-kumo-hairline, var(--chrome-line));
+  border-radius: 6px;
   background: transparent;
   text-decoration: none;
+  cursor: pointer;
 }
 .atelier-chrome .chrome-icon-btn:hover,
-.atelier-chrome .chrome-icon-btn.active {
-  color: var(--chrome-text);
-  background: var(--chrome-fill);
+.atelier-chrome .chrome-icon-btn.active,
+.atelier-chrome .chrome-icon-btn[aria-pressed="true"] {
+  color: var(--text-color-kumo-strong, var(--chrome-text));
+  background: var(--color-kumo-fill, var(--chrome-fill));
 }
+.atelier-chrome .chrome-icon-btn svg { display: block; }
 .brand-logo {
   height: 28px;
   width: auto;
@@ -154,23 +159,93 @@
   background: #0d1117;
 }
 .term-ask {
-  width: 280px;
+  width: 22rem;
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
   min-height: 0;
   border-left: 1px solid var(--color-kumo-line);
-  background: var(--color-kumo-base);
-}
-.term-ask textarea {
-  width: 100%;
-  min-height: 5rem;
-  resize: vertical;
-  font: inherit;
-  color: inherit;
   background: var(--color-kumo-elevated);
-  border: 1px solid var(--color-kumo-line);
+}
+.term-ask[hidden] { display: none; }
+.ask-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 0.85rem;
+  border-bottom: 1px solid var(--color-kumo-line);
+}
+.ask-title { margin: 0; font-size: 1.05rem; }
+.ask-context {
+  margin: 0.2rem 0 0;
+  font-size: 0.75rem;
+  color: var(--text-color-kumo-subtle);
+}
+.ask-head-actions { display: flex; gap: 0.35rem; }
+.ask-icon-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid var(--color-kumo-hairline, var(--chrome-line));
   border-radius: 6px;
+  background: transparent;
+  color: var(--text-color-kumo-subtle);
+  cursor: pointer;
+}
+.ask-icon-btn:hover {
+  background: var(--color-kumo-fill, var(--chrome-fill));
+  color: var(--text-color-kumo-strong);
+}
+.ask-icon-btn.primary {
+  background: var(--color-kumo-brand, #96a2fc);
+  border-color: transparent;
+  color: var(--text-color-kumo-inverse, #101418);
+}
+.ask-icon-btn svg { display: block; }
+.ask-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0.75rem 0.85rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+}
+.ask-msg {
+  border-radius: 8px;
+  padding: 0.55rem 0.65rem;
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+.ask-user {
+  align-self: flex-end;
+  background: var(--color-kumo-recessed, var(--color-kumo-fill));
+  max-width: 92%;
+}
+.ask-compose {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.4rem;
+  padding: 0.65rem 0.85rem 0.85rem;
+  border-top: 1px solid var(--color-kumo-line);
+}
+.ask-compose textarea {
+  flex: 1 1 auto;
+  min-width: 0;
+  resize: vertical;
+  min-height: 3.4rem;
+  background: var(--color-kumo-base);
+  border: 1px solid var(--color-kumo-line);
+  color: inherit;
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+  font-size: 0.88rem;
 }
 .term-chart {
   display: flex;
