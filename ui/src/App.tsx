@@ -1,5 +1,5 @@
 import { Select, Switch } from "@cloudflare/kumo";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { applyColorMode, type ColorMode } from "./theme/colorMode";
 
@@ -2576,15 +2576,198 @@ function Summary({
   );
 }
 
+type TermSession = { id: string; section: string; status: string; detail: string; created: number };
+
 function Terminal() {
+  const [section, setSection] = useState("current");
+  const [sessions, setSessions] = useState<TermSession[]>([]);
+  const [active, setActive] = useState("");
+  const [status, setStatus] = useState("No server session");
+  const [ask, setAsk] = useState("");
+  const [chart, setChart] = useState<number[]>([]);
+  const cursor = useRef(0);
+  const host = useRef<HTMLDivElement>(null);
+
+  const refresh = useCallback(() => {
+    fetch(`/api/optagent/v1/terminal/sessions?section=${encodeURIComponent(section)}`)
+      .then((response) => response.json())
+      .then((data: { sessions?: TermSession[] }) => setSessions(data.sessions || []))
+      .catch(() => undefined);
+  }, [section]);
+
+  useEffect(() => {
+    refresh();
+  }, [refresh]);
+
+  useEffect(() => {
+    const node = host.current;
+    if (!node || !active) return;
+    type GhostTerm = { write: (data: string) => void; onData: (cb: (data: string) => void) => void; cols: number; rows: number; loadAddon: (addon: unknown) => void; open: (el: HTMLElement) => void };
+    let term: GhostTerm | null = null;
+    let timer = 0;
+    let stopped = false;
+    cursor.current = 0;
+
+    function loadGhostty(): Promise<void> {
+      if ((window as Window & { __ghostty?: unknown }).__ghostty) return Promise.resolve();
+      return new Promise((resolve) => {
+        const script = document.createElement("script");
+        script.type = "module";
+        script.textContent = [
+          "import { Ghostty, Terminal, FitAddon } from '/ghostty/ghostty-web.js';",
+          "try {",
+          "  const instance = await Ghostty.load('/ghostty/ghostty-vt.wasm');",
+          "  window.__ghostty = { Ghostty, Terminal, FitAddon, instance };",
+          "} catch (e) { window.__ghosttyError = e; }",
+          "window.dispatchEvent(new CustomEvent('ghostty-ready'));",
+        ].join("\n");
+        window.addEventListener("ghostty-ready", () => resolve(), { once: true });
+        document.head.appendChild(script);
+      });
+    }
+
+    loadGhostty().then(() => {
+      const ghost = (window as Window & { __ghostty?: { Terminal: new (opts: object) => GhostTerm; FitAddon: new () => unknown; instance: unknown } }).__ghostty;
+      if (!ghost || !node) {
+        setStatus("Ghostty assets are not loaded");
+        return;
+      }
+      const created = new ghost.Terminal({
+        ghostty: ghost.instance,
+        fontSize: 13,
+        theme: { background: "#0d1117", foreground: "#c9d1d9" },
+      });
+      const fit = new ghost.FitAddon();
+      created.loadAddon(fit);
+      created.open(node);
+      term = created;
+      created.onData((data) => {
+        fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data }),
+        }).catch(() => undefined);
+      });
+      fetch(`/api/optagent/v1/terminal/sessions/${active}/resize`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cols: created.cols || 80, rows: created.rows || 24 }),
+      }).catch(() => undefined);
+      const pull = () => {
+        if (stopped) return;
+        fetch(`/api/optagent/v1/terminal/sessions/${active}/output?cursor=${cursor.current}`)
+          .then((response) => response.json())
+          .then((frame: { cursor?: number; data?: string; status?: string }) => {
+            if (typeof frame.cursor === "number") cursor.current = frame.cursor;
+            if (frame.data && term) term.write(frame.data);
+            if (frame.status) setStatus(frame.status);
+            const points = (frame.data || "").match(/:::optagent-chart\s+(\[[^\]]*\])/);
+            if (points) {
+              try {
+                const parsed = JSON.parse(points[1]) as unknown;
+                if (Array.isArray(parsed)) setChart(parsed.filter((item) => typeof item === "number"));
+              } catch {
+                /* ignore a partial fence */
+              }
+            }
+          })
+          .catch(() => undefined)
+          .finally(() => {
+            timer = window.setTimeout(pull, 250);
+          });
+      };
+      pull();
+    });
+    return () => {
+      stopped = true;
+      window.clearTimeout(timer);
+      node.replaceChildren();
+    };
+  }, [active]);
+
+  const openSession = () => {
+    fetch("/api/optagent/v1/terminal/sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ section }),
+    })
+      .then((response) => response.json())
+      .then((row: TermSession) => {
+        setActive(row.id);
+        setStatus(row.status);
+        refresh();
+      })
+      .catch(() => setStatus("Could not open a server session"));
+  };
+
+  const askSend = () => {
+    if (!active || !ask.trim()) return;
+    fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: ask.endsWith("\n") ? ask : `${ask}\n` }),
+    }).catch(() => undefined);
+    setAsk("");
+  };
+
+  const max = Math.max(1, ...chart);
+
   return (
-    <div className="term-full">
-      <div className="term-status">Ghostty not connected</div>
-      <div id="terminal-wrap">
-        <div id="terminal">
-          {`OptAgent terminal frame\n\nThis is the Ghostty embed slot used by Gaius:\nterm-full → terminal-wrap → #terminal\n\nThe PTY bridge is not attached.`}
+    <div className="term-page">
+      <aside className="sum-rail" aria-label="Terminal sessions">
+        <div className="sum-group">
+          <div className="sum-group-title">SECTION</div>
+          <Select
+            aria-label="Section"
+            size="sm"
+            value={section}
+            onValueChange={(value) => {
+              if (value) setSection(String(value));
+            }}
+            items={["archive", "current", "scratch"].map((id) => ({
+              value: id,
+              label: id.charAt(0).toUpperCase() + id.slice(1),
+            }))}
+          />
         </div>
-      </div>
+        <div className="sum-group">
+          <div className="sum-group-title">SESSIONS</div>
+          <button type="button" className="sum-week-btn" onClick={openSession}>New session</button>
+          <ul className="sum-note-list">
+            {sessions.map((row) => (
+              <li key={row.id}>
+                <button type="button" className="sum-week-btn" onClick={() => setActive(row.id)}>
+                  {row.id.slice(0, 8)}
+                </button>
+                <span className="muted"> {row.status}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </aside>
+      <section className="term-main" aria-label="Terminal execution">
+        <p className="muted" style={{ margin: "0.35rem 0.6rem" }}>{status}</p>
+        <div id="terminal" ref={host} />
+      </section>
+      <aside className="term-ask" aria-label="Ask">
+        <div className="sum-group">
+          <div className="sum-group-title">ASK</div>
+          <textarea aria-label="Ask" value={ask} onChange={(event) => setAsk(event.target.value)} />
+          <button type="button" className="sum-week-btn" onClick={askSend}>Send</button>
+        </div>
+        <div className="sum-group">
+          <div className="sum-group-title">CHART</div>
+          {chart.length ? (
+            <div className="term-chart" aria-label="Chart">
+              {chart.map((value, index) => (
+                <i key={index} style={{ height: `${(value / max) * 100}%` }} />
+              ))}
+            </div>
+          ) : (
+            <p className="muted">No chart in this session.</p>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }

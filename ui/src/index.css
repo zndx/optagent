@@ -75,6 +75,7 @@
 .shell-main { flex: 1; min-height: 0; }
 .shell-main:has(.cog-page),
 .shell-main:has(.sum-page),
+.shell-main:has(.term-page),
 .shell-main:has(.term-full) {
   display: flex;
   flex-direction: column;
@@ -127,11 +128,56 @@
   object-fit: contain;
 }
 .brand-card-name { display: block; padding: 0.4rem 0.6rem 0; font-weight: 600; }
-.sum-page {
+.sum-page,
+.term-page {
   display: flex;
   flex: 1;
   min-height: 0;
   background: var(--color-kumo-canvas);
+}
+.term-main {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: #0d1117;
+}
+.term-main #terminal {
+  flex: 1;
+  min-height: 0;
+}
+.term-ask {
+  width: 280px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--color-kumo-line);
+  background: var(--color-kumo-base);
+}
+.term-ask textarea {
+  width: 100%;
+  min-height: 5rem;
+  resize: vertical;
+  font: inherit;
+  color: inherit;
+  background: var(--color-kumo-elevated);
+  border: 1px solid var(--color-kumo-line);
+  border-radius: 6px;
+}
+.term-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  height: 88px;
+}
+.term-chart i {
+  display: block;
+  flex: 1;
+  background: var(--text-color-kumo-link);
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
 }
 .sum-rail {
   width: 210px;

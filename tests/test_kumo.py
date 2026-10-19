@@ -48,7 +48,9 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "item.overwatch" in source
     assert "Snapshot." in source
     assert 'id="terminal"' in source
-    assert "Ghostty not connected" in source
+    assert "term-page" in source
+    assert "New session" in source
+    assert 'sum-group-title">ASK' in source
     assert "height={28}" in source
     css = (ROOT / "ui" / "src" / "index.css").read_text(encoding="utf-8")
     assert "@cloudflare/kumo/styles/tailwind" in css

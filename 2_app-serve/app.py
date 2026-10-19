@@ -563,6 +563,7 @@ def _mime(suffix: str) -> str:
         ".css": "text/css; charset=utf-8",
         ".svg": "image/svg+xml",
         ".woff2": "font/woff2",
+        ".wasm": "application/wasm",
     }.get(suffix, "application/octet-stream")
 
 
@@ -587,11 +588,11 @@ def _ui_file(route: str) -> Path | None:
         return None
     if route in {"/", "/index.html", "/sessions", "/summary", "/terminal", "/settings", "/settings/"} or route.startswith("/summary/"):
         candidate = _UI_DIST / "index.html"
-    elif route.startswith("/assets/") or route.startswith("/brand/"):
+    elif route.startswith("/assets/") or route.startswith("/brand/") or route.startswith("/ghostty/"):
         candidate = (_UI_DIST / route.lstrip("/")).resolve()
         if not str(candidate).startswith(str(_UI_DIST.resolve())):
             return None
-        if not candidate.is_file() and route.startswith("/brand/"):
+        if not candidate.is_file() and (route.startswith("/brand/") or route.startswith("/ghostty/")):
             public = (ROOT / "ui" / "public" / route.removeprefix("/")).resolve()
             if str(public).startswith(str((ROOT / "ui" / "public").resolve())) and public.is_file():
                 return public
@@ -786,6 +787,54 @@ def _open_session(headers: dict | None):
     return session, [cookie_header(session["id"])]
 
 
+def _terminal_response(method: str, parsed, body: bytes) -> tuple[int, str, bytes] | None:
+    """HTTP face for server-side terminal sessions. The PTY stays in this process."""
+
+    path = parsed.path
+    prefix = "/api/optagent/v1/terminal/sessions"
+    if path != prefix and not path.startswith(prefix + "/"):
+        return None
+    from optagent.terminal_host import create_session, get_session, list_sessions, move_session
+
+    try:
+        payload = json.loads(body.decode() or "{}") if body else {}
+    except json.JSONDecodeError:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    query = urllib.parse.parse_qs(parsed.query)
+    try:
+        if method == "GET" and path == prefix:
+            section = (query.get("section") or [""])[0]
+            encoded = json.dumps({"sessions": list_sessions(section)}).encode()
+            return 200, "application/json; charset=utf-8", encoded
+        if method == "POST" and path == prefix:
+            created = create_session(str(payload.get("section") or "current"))
+            return 200, "application/json; charset=utf-8", json.dumps(created).encode()
+        rest = path[len(prefix) + 1 :]
+        session_id, _, action = rest.partition("/")
+        if not session_id:
+            return 404, "application/json; charset=utf-8", b'{"error":"missing session"}\n'
+        if method == "GET" and action == "output":
+            cursor = int((query.get("cursor") or ["0"])[0] or 0)
+            frame = get_session(session_id).read(cursor)
+            return 200, "application/json; charset=utf-8", json.dumps(frame).encode()
+        if method == "POST" and action == "input":
+            get_session(session_id).write(str(payload.get("data") or ""))
+            return 200, "application/json; charset=utf-8", b'{"ok":true}\n'
+        if method == "POST" and action == "resize":
+            get_session(session_id).resize(int(payload.get("cols") or 80), int(payload.get("rows") or 24))
+            return 200, "application/json; charset=utf-8", b'{"ok":true}\n'
+        if method == "POST" and action == "section":
+            moved = move_session(session_id, str(payload.get("section") or ""))
+            return 200, "application/json; charset=utf-8", json.dumps(moved).encode()
+    except KeyError:
+        return 404, "application/json; charset=utf-8", b'{"error":"unknown session"}\n'
+    except ValueError as exc:
+        return 400, "application/json; charset=utf-8", json.dumps({"error": str(exc)}).encode()
+    return 404, "application/json; charset=utf-8", b'{"error":"not found"}\n'
+
+
 def response_for(
     method: str,
     path: str,
@@ -799,6 +848,9 @@ def response_for(
 
     runtime = load_runtime()
     session, extra = _open_session(headers)
+    terminal = _terminal_response(method, parsed, body)
+    if terminal is not None:
+        return (*terminal, extra)
     if method == "POST" and parsed.path == "/api/optagent/v1/snapshot":
         from optagent.snapshot_store import install_archive
 
