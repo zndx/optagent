@@ -996,7 +996,34 @@ def make_handler() -> type[BaseHTTPRequestHandler]:
             self.wfile.write(body)
 
         def do_GET(self) -> None:
+            if self.path.startswith("/ws/terminal/"):
+                self._terminal_socket()
+                return
             self._send("GET")
+
+        def _terminal_socket(self) -> None:
+            """Ghostty attaches here. The harness stays up when this socket closes."""
+
+            if self.headers.get("Upgrade", "").lower() != "websocket":
+                self.send_error(400, "websocket required")
+                return
+            key = self.headers.get("Sec-WebSocket-Key", "").strip()
+            if not key:
+                self.send_error(400, "missing websocket key")
+                return
+            parsed = urllib.parse.urlparse(self.path)
+            session_id = parsed.path.removeprefix("/ws/terminal/").split("/", 1)[0]
+            section = (urllib.parse.parse_qs(parsed.query).get("section") or ["current"])[0]
+            from optagent.terminal_ws import accept_value, session_loop
+
+            self.send_response(101, "Switching Protocols")
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", accept_value(key))
+            self.end_headers()
+            self.wfile.flush()
+            self.close_connection = True
+            session_loop(self.connection, session_id, section)
 
         def do_POST(self) -> None:
             length = int(self.headers.get("Content-Length") or 0)

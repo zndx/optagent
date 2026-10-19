@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import pty
+import queue
 import re
 import shutil
 import signal
@@ -496,6 +497,7 @@ class TerminalSession:
         self._lock = threading.Lock()
         self._start_lock = threading.Lock()
         self._generation = 0
+        self._listeners: list[queue.Queue[bytes]] = []
 
     def alive(self) -> bool:
         proc = self._proc
@@ -547,9 +549,28 @@ class TerminalSession:
         except OSError:
             return
 
+    def listen(self) -> tuple[bytes, queue.Queue[bytes]]:
+        """Snapshot plus a queue of later output. Unlisten does not stop the harness."""
+
+        box: queue.Queue[bytes] = queue.Queue()
+        with self._lock:
+            snap = bytes(self._chunks)
+            self._listeners.append(box)
+        return snap, box
+
+    def unlisten(self, box: queue.Queue[bytes]) -> None:
+        with self._lock:
+            if box in self._listeners:
+                self._listeners.remove(box)
+
     def _append(self, data: bytes) -> None:
+        if not data:
+            return
         with self._lock:
             self._chunks.extend(data)
+            listeners = list(self._listeners)
+        for box in listeners:
+            box.put(bytes(data))
 
     def ensure(self) -> None:
         """Start the PTY once. A second open of the same id reuses the child."""

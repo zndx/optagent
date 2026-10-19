@@ -2737,6 +2737,7 @@ function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
     let timer = 0;
     let stopped = false;
     let observed: ResizeObserver | null = null;
+    let socket: WebSocket | null = null;
     cursor.current = 0;
 
     function loadGhostty(): Promise<void> {
@@ -2784,56 +2785,112 @@ function Terminal({ askOpen, onAsk }: { askOpen: boolean; onAsk: () => void }) {
       created.loadAddon(fit);
       created.open(node);
       term = created;
-      const sendSize = () => {
+      const postInput = (data: string) => {
+        fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ data }),
+        }).catch(() => undefined);
+      };
+      const noteChart = (data: string) => {
+        const points = data.match(/:::optagent-chart\s+(\[[^\]]*\])/);
+        if (!points) return;
+        try {
+          const parsed = JSON.parse(points[1]) as unknown;
+          if (Array.isArray(parsed)) setChart(parsed.filter((item) => typeof item === "number"));
+        } catch {
+          /* ignore a partial fence */
+        }
+      };
+      fitRef.current = () => {
         if (typeof fit.fit === "function") fit.fit();
         const cols = Math.max(2, created.cols || 80);
         const rows = Math.max(2, created.rows || 24);
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "resize", cols, rows }));
+          return;
+        }
         fetch(`/api/optagent/v1/terminal/sessions/${active}/resize`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cols, rows }),
         }).catch(() => undefined);
       };
-      fitRef.current = sendSize;
-      sendSize();
-      observed = new ResizeObserver(() => sendSize());
-      observed.observe(node);
-      if (node.parentElement) observed.observe(node.parentElement);
-      created.onData((data) => {
-        fetch(`/api/optagent/v1/terminal/sessions/${active}/input`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data }),
-        }).catch(() => undefined);
-      });
+      let opened = false;
+      let delay = 500;
       const pull = () => {
-        if (stopped) return;
+        if (stopped || opened) return;
         fetch(`/api/optagent/v1/terminal/sessions/${active}/output?cursor=${cursor.current}`)
           .then((response) => response.json())
           .then((frame: { cursor?: number; data?: string; status?: string }) => {
             if (typeof frame.cursor === "number") cursor.current = frame.cursor;
             if (frame.data && term) term.write(frame.data);
             if (frame.status) setStatus(frame.status);
-            const points = (frame.data || "").match(/:::optagent-chart\s+(\[[^\]]*\])/);
-            if (points) {
-              try {
-                const parsed = JSON.parse(points[1]) as unknown;
-                if (Array.isArray(parsed)) setChart(parsed.filter((item) => typeof item === "number"));
-              } catch {
-                /* ignore a partial fence */
-              }
-            }
+            if (frame.data) noteChart(frame.data);
           })
           .catch(() => undefined)
           .finally(() => {
-            timer = window.setTimeout(pull, 250);
+            if (!opened) timer = window.setTimeout(pull, 250);
           });
       };
-      pull();
+      const connect = () => {
+        if (stopped) return;
+        const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+        const next = new WebSocket(
+          `${proto}//${window.location.host}/ws/terminal/${active}?section=${encodeURIComponent(section)}`,
+        );
+        socket = next;
+        next.onopen = () => {
+          opened = true;
+          delay = 500;
+          window.clearTimeout(timer);
+        };
+        next.onmessage = (event) => {
+          let message: { type?: string; data?: string; replay?: boolean } = {};
+          try {
+            message = JSON.parse(String(event.data)) as { type?: string; data?: string; replay?: boolean };
+          } catch {
+            if (term) term.write(String(event.data));
+            return;
+          }
+          if (message.type === "status" && message.data) setStatus(message.data);
+          if (message.type === "text" && message.data && term) {
+            if (message.replay) term.write("\x1bc");
+            term.write(message.data);
+            noteChart(message.data);
+          }
+        };
+        next.onclose = () => {
+          if (stopped) return;
+          if (!opened) {
+            pull();
+            return;
+          }
+          setStatus("reconnecting");
+          timer = window.setTimeout(connect, delay);
+          delay = Math.min(delay * 2, 8000);
+        };
+      };
+      fitRef.current();
+      observed = new ResizeObserver(() => fitRef.current?.());
+      observed.observe(node);
+      if (node.parentElement) observed.observe(node.parentElement);
+      created.onData((data) => {
+        if (socket && socket.readyState === WebSocket.OPEN) {
+          socket.send(JSON.stringify({ type: "input", data }));
+          return;
+        }
+        postInput(data);
+      });
+      connect();
     });
     return () => {
       stopped = true;
       fitRef.current = null;
+      if (socket) {
+        socket.onclose = null;
+        socket.close();
+      }
       observed?.disconnect();
       window.clearTimeout(timer);
       node.replaceChildren();
