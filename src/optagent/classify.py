@@ -443,7 +443,7 @@ def classify_snapshot(
                 body = post(text, choice_questions(candidates, points))
             except Exception as exc:
                 errors += 1
-                print(f"classify error {type(exc).__name__}", flush=True)
+                print(f"classify error {type(exc).__name__}: {str(exc)[:200]}", flush=True)
                 continue
             called += 1
             _stamp_usage(attributes, body if isinstance(body, dict) else {})

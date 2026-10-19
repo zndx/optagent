@@ -9,6 +9,10 @@ AEGIR="${AEGIR_ROOT:-/home/rch/local/src/zndx/aegir}"
 SIGNALS="${SIGNALS_ROOT:-/home/rch/local/src/wxs/signals}"
 PY="${AEGIR_PYTHON:-$AEGIR/.devenv/state/venv/bin/python}"
 export HOME="${HOME:-/home/rch}"
+export OPTAGENT_SESSION_DIR="${OPTAGENT_SESSION_DIR:-$OPT/.devenv/state}"
+if [[ "$(id -u)" -eq 0 ]]; then
+  export KRB5CCNAME="${KRB5CCNAME_ROOT:-/tmp/optagent-krb5cc}"
+fi
 export PYTHONPATH="${OPT}/src:${AEGIR}/src${PYTHONPATH:+:$PYTHONPATH}"
 export SIGNALS_PYTHON="${SIGNALS_PYTHON:-$PY}"
 export KRB5CCNAME="${KRB5CCNAME:-$SIGNALS/.devenv/kdc/krb5cc}"
