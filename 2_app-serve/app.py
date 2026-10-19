@@ -707,6 +707,9 @@ def _summary_ranges(raw: str) -> list[tuple[int, int]]:
     return found
 
 
+_SPAN_CACHE: dict[tuple, list] = {}
+
+
 def _loaded_spans(runtime) -> list:
     from pathlib import Path
 
@@ -714,9 +717,27 @@ def _loaded_spans(runtime) -> list:
 
     origin = _origin_snapshot(runtime)
     root = Path(str(origin.get("location") or "")).parent
+    members = origin.get("members") or []
     if not root.is_dir():
         return []
-    return load_member_spans(root, origin.get("members") or [])
+    stamps: list[tuple[str, int]] = []
+    base = root.resolve()
+    for member in members:
+        if str(member.get("kind") or "") != "spans":
+            continue
+        relative = str(member.get("metadata-location") or "")
+        path = (base / relative).resolve()
+        if base != path and base not in path.parents:
+            continue
+        stamps.append((str(path), path.stat().st_mtime_ns if path.is_file() else 0))
+    key = tuple(stamps)
+    cached = _SPAN_CACHE.get(key)
+    if cached is not None:
+        return cached
+    loaded = load_member_spans(root, members)
+    _SPAN_CACHE.clear()
+    _SPAN_CACHE[key] = loaded
+    return loaded
 
 
 def _activity(runtime) -> dict:
@@ -754,6 +775,80 @@ def _sessions_origin(runtime) -> dict:
             projects.append(name)
     document["phoenix"] = session_catalog(_loaded_spans(runtime), projects)
     return document
+
+
+def _summary_cache_query(raw: str, snapshot_id: str) -> str:
+    """Cache key for one lineup. The default window is omitted so both URLs match."""
+
+    parsed = urllib.parse.parse_qs(raw)
+    window = (parsed.get("window") or ["365d"])[0]
+    project = (parsed.get("project") or [""])[0]
+    ranges = _summary_ranges((parsed.get("ranges") or [""])[0])
+    items: list[tuple[str, str]] = []
+    if snapshot_id:
+        items.append(("snapshot", snapshot_id))
+    if window != "365d":
+        items.append(("window", window))
+    if project:
+        items.append(("project", project))
+    if ranges:
+        items.append(("ranges", ",".join(f"{start}:{end}" for start, end in ranges)))
+    return urllib.parse.urlencode(items)
+
+
+def _summary_document(runtime, raw_query: str) -> dict:
+    """Pointer panels plus the lineup the Summary page renders."""
+
+    from optagent.enriched import PRODUCT_ID, enrichment_counts
+    from optagent.lineup import build_lineup
+    from optagent.snapshot_store import installed_document, state_dir
+
+    document = _summary_origin(runtime)
+    installed = installed_document() or {}
+    summary = installed.get("summary") if isinstance(installed.get("summary"), dict) else {}
+    version = str(installed.get("snapshot-id") or document.get("snapshot-id") or "")
+    spans = _loaded_spans(runtime)
+    counts = enrichment_counts(spans)
+    shipped = summary.get("product.data_uri") if summary.get("product.version") == version else ""
+    product = {
+        "id": PRODUCT_ID,
+        "version": version,
+        "data_uri": shipped or "",
+        "tx_id": (summary.get("product.tx_id") or "") if shipped else "",
+        "rows": str(counts["rows"]),
+        "links": str(counts["links"]),
+    } if version else None
+    query = urllib.parse.parse_qs(raw_query)
+    window = (query.get("window") or ["365d"])[0]
+    project = (query.get("project") or [""])[0]
+    ranges = _summary_ranges((query.get("ranges") or [""])[0])
+    archive_root = state_dir() / "archive"
+    archived = sorted(path.name for path in archive_root.iterdir()) if archive_root.is_dir() else []
+    live = bool(os.environ.get("OPTAGENT_TRACE_STREAM", "").strip()) and not os.environ.get("CDSW_APP_PORT")
+    document["lineup"] = build_lineup(
+        spans,
+        now_ms=int(time.time() * 1000),
+        window=window,
+        archive=archived,
+        live=live,
+        project=project,
+        product=product,
+        ranges=ranges,
+    )
+    return document
+
+
+def _cached_body(name: str, query: str = "", timeout: float = 1.5) -> bytes | None:
+    """Raw origin bytes from Varnish. None when Varnish is down or the read fails."""
+
+    port = os.environ.get("OPTAGENT_VARNISH_PORT", "6095")
+    suffix = f"?{query}" if query else ""
+    url = f"http://127.0.0.1:{port}/api/optagent/v1/{name}{suffix}"
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return response.read()
+    except (OSError, TimeoutError):
+        return None
 
 
 def _cached_json(runtime, name: str, origin) -> dict:
@@ -887,48 +982,15 @@ def response_for(
     if parsed.path == "/api/optagent/v1/snapshot_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_origin_snapshot(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary_origin":
-        return 200, "application/json; charset=utf-8", json.dumps(_summary_origin(runtime)).encode(), extra
+        return 200, "application/json; charset=utf-8", json.dumps(_summary_document(runtime, parsed.query)).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions_origin":
         return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary":
-        from optagent.lineup import build_lineup
-        from optagent.snapshot_store import installed_document, state_dir
-
-        from optagent.enriched import PRODUCT_ID, enrichment_counts
-
-        document = _cached_json(runtime, "summary_origin", _summary_origin)
-        installed = installed_document() or {}
-        summary = installed.get("summary") if isinstance(installed.get("summary"), dict) else {}
-        version = str(installed.get("snapshot-id") or document.get("snapshot-id") or "")
-        spans = _loaded_spans(runtime)
-        counts = enrichment_counts(spans)
-        shipped = summary.get("product.data_uri") if summary.get("product.version") == version else ""
-        product = {
-            "id": PRODUCT_ID,
-            "version": version,
-            "data_uri": shipped or "",
-            "tx_id": (summary.get("product.tx_id") or "") if shipped else "",
-            "rows": str(counts["rows"]),
-            "links": str(counts["links"]),
-        } if version else None
-        query = urllib.parse.parse_qs(parsed.query)
-        window = (query.get("window") or ["365d"])[0]
-        project = (query.get("project") or [""])[0]
-        ranges = _summary_ranges((query.get("ranges") or [""])[0])
-        archive_root = state_dir() / "archive"
-        archived = sorted(path.name for path in archive_root.iterdir()) if archive_root.is_dir() else []
-        live = bool(os.environ.get("OPTAGENT_TRACE_STREAM", "").strip()) and not os.environ.get("CDSW_APP_PORT")
-        document["lineup"] = build_lineup(
-            spans,
-            now_ms=int(time.time() * 1000),
-            window=window,
-            archive=archived,
-            live=live,
-            project=project,
-            product=product,
-            ranges=ranges,
-        )
-        return 200, "application/json; charset=utf-8", json.dumps(document).encode(), extra
+        cache_query = _summary_cache_query(parsed.query, _loaded_snapshot_id())
+        cached = _cached_body("summary_origin", cache_query, timeout=30)
+        if not cached or b'"lineup"' not in cached:
+            cached = json.dumps(_summary_document(runtime, cache_query)).encode()
+        return 200, "application/json; charset=utf-8", cached, extra
     if parsed.path == "/api/optagent/v1/sessions":
         return 200, "application/json; charset=utf-8", json.dumps(_cached_json(runtime, "sessions_origin", _sessions_origin)).encode(), extra
     if parsed.path == "/api/optagent/v1/activity":

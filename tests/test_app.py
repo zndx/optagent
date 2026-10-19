@@ -169,6 +169,42 @@ def test_framed_pages_share_one_shell() -> None:
     assert body.decode("utf-8") == shell
 
 
+def test_summary_reads_the_varnish_lineup(monkeypatch) -> None:
+    monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "6095")
+    seen: dict[str, object] = {}
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    def fake_open(url, timeout=0):
+        seen["url"] = url
+        seen["timeout"] = timeout
+        body = json.dumps({"format": "optagent-summary", "lineup": {"pin": "cached"}, "groups": []}).encode()
+        return Response(body)
+
+    monkeypatch.setattr(APP.urllib.request, "urlopen", fake_open)
+    status, _, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary?window=365d")
+    document = json.loads(body)
+    assert status == 200
+    assert document["lineup"]["pin"] == "cached"
+    assert str(seen["url"]).endswith("/api/optagent/v1/summary_origin") or "summary_origin?" in str(seen["url"])
+    assert "window=" not in str(seen["url"])
+    assert seen["timeout"] == 30
+    status, _, body, _extra = APP.response_for(
+        "GET",
+        "/api/optagent/v1/summary?window=7d&project=hermes&ranges=10:20",
+    )
+    assert json.loads(body)["lineup"]["pin"] == "cached"
+    url = str(seen["url"])
+    assert "window=7d" in url
+    assert "project=hermes" in url
+    assert "ranges=10" in url
+
+
 def test_summary_and_sessions_origins_skip_varnish(monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "1")
     status, content_type, body, _extra = APP.response_for("GET", "/api/optagent/v1/summary_origin")

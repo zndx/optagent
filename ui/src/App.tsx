@@ -221,7 +221,7 @@ function applyFavicon(href: string): void {
 export default function App() {
   const route = pathName();
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
-  const [summary, setSummary] = useState<SummaryDoc>({});
+  const summary: SummaryDoc = {};
   const [section, setSection] = useState("all");
   const [lens, setLens] = useState("all");
   const [sessionsDoc, setSessionsDoc] = useState<SessionsDoc>({});
@@ -260,14 +260,6 @@ export default function App() {
   useEffect(() => {
     void reloadWorkspace();
   }, []);
-
-  useEffect(() => {
-    if (route !== "/summary") return;
-    fetch("/api/optagent/v1/summary")
-      .then((response) => response.json())
-      .then((data: SummaryDoc) => setSummary(data))
-      .catch(() => setSummary({}));
-  }, [route]);
 
   useEffect(() => {
     if (route !== "/sessions") return;
@@ -2373,14 +2365,14 @@ function TrailPanels({
   );
 }
 
-function LineupSummary({ lineup }: { lineup: LineupDoc }) {
+function LineupSummary({ lineup }: { lineup?: LineupDoc }) {
   const stored = useRef(loadStoredTrail());
   const [root, setRoot] = useState(stored.current?.root || "current");
-  const [windowId, setWindowId] = useState(initialWindow(lineup.tracing.window || "365d"));
+  const [windowId, setWindowId] = useState(initialWindow(lineup?.tracing.window || "365d"));
   const [trail, setTrail] = useState<TrailStop[]>(initialTrail);
   const [project, setProject] = useState(projectFromTrail(initialTrail()));
-  const [view, setView] = useState<LineupDoc>(lineup);
-  const [loading, setLoading] = useState(false);
+  const [view, setView] = useState<LineupDoc | null>(lineup ?? null);
+  const [loading, setLoading] = useState(lineup == null);
   const trailRef = useRef<HTMLElement>(null);
   const prevLen = useRef(trail.length);
   useEffect(() => {
@@ -2437,15 +2429,15 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
   }, []);
-  const byIri = useMemo(() => new Map(view.lexicon.map((item) => [item.iri, item])), [view.lexicon]);
+  const byIri = useMemo(() => new Map((view?.lexicon ?? []).map((item) => [item.iri, item])), [view]);
   const byCode = useMemo(() => {
     const map = new Map<string, LineupConcept>();
-    for (const item of view.lexicon) {
+    for (const item of view?.lexicon ?? []) {
       if (item.code && !map.has(item.code)) map.set(item.code, item);
     }
     return map;
-  }, [view.lexicon]);
-  const byTable = useMemo(() => new Map(view.schema.map((item) => [item.name, item])), [view.schema]);
+  }, [view]);
+  const byTable = useMemo(() => new Map((view?.schema ?? []).map((item) => [item.name, item])), [view]);
   const openFrom = (index: number, href: string) => {
     const next = stopFromToken(href) || (byTable.has(href) ? { kind: "schema" as const, name: href } : null);
     if (!next || !isTrailStop(next)) return;
@@ -2457,6 +2449,16 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
     });
   };
   const seed = trail[0];
+  if (!view) {
+    return (
+      <div className="sum-page">
+        <aside className="sum-rail" aria-label="Summary lineup" />
+        <section className="sum-trail" aria-label="Lineup">
+          <p className="muted">{loading ? "Loading summary…" : "This summary is unavailable."}</p>
+        </section>
+      </div>
+    );
+  }
   return (
     <div className="sum-page">
       <aside className="sum-rail" aria-label="Summary lineup">
@@ -2563,6 +2565,9 @@ function Summary({
 }) {
   if (summary.lineup) {
     return <LineupSummary lineup={summary.lineup} />;
+  }
+  if (!(summary.groups ?? []).length && !(summary.panels ?? []).length) {
+    return <LineupSummary />;
   }
   const groups = summary.groups ?? [];
   const panels = (summary.panels ?? []).filter((panel) => {
