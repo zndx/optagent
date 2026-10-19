@@ -35,18 +35,19 @@ def test_the_settings_brand_replaces_the_grok_mark(monkeypatch, tmp_path) -> Non
     monkeypatch.delenv("OPTAGENT_BRAND_ID", raising=False)
     (state / "optagent-ui.json").write_text('{"brand_id": "weathership"}\n', encoding="utf-8")
     rewriter = terminal_host.LogoRewriter()
-    painted = "\x1b[38;2;180;180;180m" + terminal_host._GROK_LOGO_SMALL[0] + "\x1b[0m"
-    first = rewriter.feed(painted.encode())
-    rest = rewriter.feed("\n".encode()) + rewriter.finish()
-    shown = (first + rest).decode("utf-8")
-    assert "   /\\/\\   " in shown
+    block = "\n".join(terminal_host._GROK_LOGO_SMALL) + "\nGrok Build  1.0.62"
+    shown = (rewriter.feed(block.encode()) + rewriter.finish()).decode("utf-8")
+    assert "[WxS]" in shown
+    assert "OptAgent" in shown
+    assert "Grok Build" not in shown
     assert "⣀⣤⣤⣀" not in shown
     (state / "optagent-ui.json").write_text('{"brand_id": "cloudera"}\n', encoding="utf-8")
     other = terminal_host.LogoRewriter()
-    block = "\n".join(terminal_host._GROK_LOGO_SMALL).encode()
-    text = (other.feed(block[:8]) + other.feed(block[8:]) + other.finish()).decode("utf-8")
-    assert "CLOUDERA" in text
-    assert "⣀⣤⣤⣀" not in text
+    raw = "\n".join(terminal_host._GROK_LOGO_FULL).encode()
+    text = (other.feed(raw[:12]) + other.feed(raw[12:]) + other.finish()).decode("utf-8")
+    assert "[C]" in text
+    assert "[WxS]" not in text
+    assert "⣀⣀⡀" not in text
 
 
 def test_brand_ascii_matches_the_harness_mark() -> None:

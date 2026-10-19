@@ -308,6 +308,20 @@ def brand_logo_pairs(brand_id: str) -> list[tuple[str, str]]:
     return pairs
 
 
+# Same width as the harness strings so the welcome card does not shift.
+_HARNESS_NAME = (
+    ("Grok Build  ", "OptAgent    "),
+    ("Grok Build,", "OptAgent,  "),
+    ("Grok Build", "OptAgent  "),
+)
+
+
+def harness_pairs(brand_id: str) -> list[tuple[str, str]]:
+    """Brand mark plus the OptAgent name, for every Settings pack."""
+
+    return list(_HARNESS_NAME) + brand_logo_pairs(brand_id)
+
+
 def _active_brand() -> str:
     from optagent.brand import active_brand_id
 
@@ -345,7 +359,7 @@ class LogoRewriter:
         if brand == self._brand:
             return
         self._brand = brand
-        self.pairs = brand_logo_pairs(brand)
+        self.pairs = harness_pairs(brand)
 
     def _drain(self) -> None:
         buf = self._pending
