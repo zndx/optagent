@@ -53,6 +53,7 @@ def test_settings_page_uses_the_kumo_switch() -> None:
     assert "connecting…" in source
     assert "No server session" not in source
     assert "optagent-terminal-session:" in source
+    assert "getRandomValues" in source
     assert 'sum-group-title">ASK' in source
     assert "height={28}" in source
     css = (ROOT / "ui" / "src" / "index.css").read_text(encoding="utf-8")

@@ -2582,13 +2582,40 @@ function terminalStorageKey(section: string): string {
   return `optagent-terminal-session:${section}`;
 }
 
+function newSessionId(): string {
+  // randomUUID exists only in a secure context. This host is served over
+  // http://tinybox…, so fall back to getRandomValues, which is available there.
+  const webCrypto = globalThis.crypto;
+  if (webCrypto && typeof webCrypto.randomUUID === "function") {
+    try {
+      return webCrypto.randomUUID();
+    } catch {
+      /* insecure origin */
+    }
+  }
+  const bytes = new Uint8Array(16);
+  if (webCrypto && typeof webCrypto.getRandomValues === "function") {
+    webCrypto.getRandomValues(bytes);
+  } else {
+    for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
+  }
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 function rememberSession(section: string): string {
   const key = terminalStorageKey(section);
-  const stored = localStorage.getItem(key);
-  if (stored) return stored;
-  const id = crypto.randomUUID();
-  localStorage.setItem(key, id);
-  return id;
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) return stored;
+    const id = newSessionId();
+    localStorage.setItem(key, id);
+    return id;
+  } catch {
+    return newSessionId();
+  }
 }
 
 function Terminal() {
@@ -2602,7 +2629,11 @@ function Terminal() {
   const host = useRef<HTMLDivElement>(null);
 
   const attach = useCallback((id: string, target: string) => {
-    localStorage.setItem(terminalStorageKey(target), id);
+    try {
+      localStorage.setItem(terminalStorageKey(target), id);
+    } catch {
+      /* the id still attaches for this view */
+    }
     setStatus("connecting…");
     return fetch("/api/optagent/v1/terminal/sessions", {
       method: "POST",
@@ -2646,6 +2677,16 @@ function Terminal() {
     function loadGhostty(): Promise<void> {
       if ((window as Window & { __ghostty?: unknown }).__ghostty) return Promise.resolve();
       return new Promise((resolve) => {
+        const done = () => resolve();
+        const timer = window.setTimeout(done, 8000);
+        window.addEventListener(
+          "ghostty-ready",
+          () => {
+            window.clearTimeout(timer);
+            done();
+          },
+          { once: true },
+        );
         const script = document.createElement("script");
         script.type = "module";
         script.textContent = [
@@ -2656,7 +2697,6 @@ function Terminal() {
           "} catch (e) { window.__ghosttyError = e; }",
           "window.dispatchEvent(new CustomEvent('ghostty-ready'));",
         ].join("\n");
-        window.addEventListener("ghostty-ready", () => resolve(), { once: true });
         document.head.appendChild(script);
       });
     }
@@ -2731,7 +2771,7 @@ function Terminal() {
   }, [active]);
 
   const openSession = () => {
-    const id = crypto.randomUUID();
+    const id = newSessionId();
     void attach(id, section).then(() => refresh());
   };
 
