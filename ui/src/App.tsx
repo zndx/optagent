@@ -93,7 +93,7 @@ type LineupDoc = {
   schema: LineupTable[];
   tracing: { window: string; projects: TracingProject[] };
   timeline?: TimelineDoc;
-  sessions: { id: string; traces: number; items: LineupSessionItem[] }[];
+  sessions: { id: string; traces: number; linked?: number; items: LineupSessionItem[] }[];
   published: string[];
   product?: {
     id: string;
@@ -2210,7 +2210,7 @@ function TrailPanels({
                     {view.sessions.map((session) => (
                       <li key={session.id}>
                         <Follow token={`session|${stop.project}|${session.id}`} label={session.id} onOpen={(token) => onOpen(index, token)} />
-                        <span className="muted"> · {session.traces} traces</span>
+                        <span className="muted"> · {session.traces} passages · {session.linked || 0} linked</span>
                       </li>
                     ))}
                   </ul>
@@ -2269,7 +2269,7 @@ function TrailPanels({
             <header className="sum-panel-head">
               <h2>{stop.id}</h2>
               {closer}
-              <span className="muted sum-panel-meta">{session ? `${session.traces} traces` : ""}</span>
+              <span className="muted sum-panel-meta">{session ? `${session.traces} passages · ${session.linked || 0} linked` : ""}</span>
             </header>
             <div className="sum-panel-body">
               {session ? session.items.map((item, itemIndex) => (

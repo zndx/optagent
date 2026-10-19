@@ -3,7 +3,16 @@
 
 from pathlib import Path
 
-from optagent.lineup import SDG_PIN, bucket_unit, build_lineup, load_lexicon, load_schema, timeline_report, token_count
+from optagent.lineup import (
+    SDG_PIN,
+    bucket_unit,
+    build_lineup,
+    load_lexicon,
+    load_schema,
+    session_items,
+    timeline_report,
+    token_count,
+)
 from optagent.phoenix_spans import make_span, rich_segments
 
 
@@ -202,3 +211,69 @@ def test_each_bin_counts_topic_domains_without_invented_metrics() -> None:
     assert domain["top_sessions"][0]["id"] == "hermes:agent-rtc:1"
     assert report["totals"]["traces"] == 2
     assert report["domains"][0]["code"] == "16.2"
+
+
+def test_session_list_keeps_linked_and_unlinked_admitted_passages() -> None:
+    stamp = 1_700_000_000_000_000_000
+    linked_text = "The specimen is accessioned in the laboratory and the lineage of that sample stays attached."
+    start = linked_text.index("lineage")
+    plain = "The afternoon conversation stayed with the paper and never settled on a concrete example worth citing today."
+    chatter = "hello there from a message that was never admitted by the aperture at all today."
+    spans = [
+        make_span(
+            project="hermes",
+            session="hermes:agent-rtc:1",
+            name="linked",
+            activity="agent-rtc",
+            capability="conversation",
+            service_name="agent-rtc",
+            trace_key="linked",
+            start_time_unix_nano=stamp,
+            output_value=linked_text,
+            attributes={
+                "aegir.genus_code": "14.2",
+                "aegir.genus_iri": "https://signals.zndx.org/sdg#DATAENG_LINEAGE",
+                "aegir.genus_label": "Data Lineage and Provenance",
+                "sdg.spans": [{
+                    "start": start,
+                    "end": start + len("lineage"),
+                    "text": "lineage",
+                    "iri": "https://signals.zndx.org/sdg#DATAENG_LINEAGE",
+                    "label": "Data Lineage and Provenance",
+                }],
+            },
+        ),
+        make_span(
+            project="hermes",
+            session="hermes:agent-rtc:1",
+            name="unlinked",
+            activity="agent-rtc",
+            capability="conversation",
+            service_name="agent-rtc",
+            trace_key="unlinked",
+            start_time_unix_nano=stamp + 1_000_000,
+            output_value=plain,
+            attributes={
+                "aegir.genus_code": "14.4",
+                "aegir.genus_iri": "https://signals.zndx.org/sdg#DATAENG_QUALITY",
+                "aegir.genus_label": "Data Profiling, Quality and Observability",
+            },
+        ),
+        make_span(
+            project="hermes",
+            session="hermes:agent-rtc:1",
+            name="chatter",
+            activity="agent-rtc",
+            capability="conversation",
+            service_name="agent-rtc",
+            trace_key="chatter",
+            start_time_unix_nano=stamp + 2_000_000,
+            output_value=chatter,
+        ),
+    ]
+    sessions = session_items(spans, "hermes")
+    assert len(sessions) == 1
+    assert sessions[0]["traces"] == 2
+    assert sessions[0]["linked"] == 1
+    names = [item["name"] for item in sessions[0]["items"]]
+    assert names == ["linked", "unlinked"]

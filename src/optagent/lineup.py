@@ -528,7 +528,14 @@ def tracing_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> d
 
 
 def session_items(spans: list[dict], project: str) -> list[dict]:
-    """One summary item per trace, grouped into the session that owns it."""
+    """Admitted passages for one project, linked and unlinked together.
+
+    Unadmitted messages stay out of this list. The navigation set is the
+    aperture result: a passage with a term link and a passage that was
+    admitted and has none.
+    """
+
+    from optagent.backfill import readable_segment
 
     grouped: dict[str, list[dict]] = {}
     for span in spans:
@@ -558,19 +565,29 @@ def session_items(spans: list[dict], project: str) -> list[dict]:
                 "genus_label": str(attributes.get("aegir.genus_label") or ""),
                 "genus_code": str(attributes.get("aegir.genus_code") or ""),
                 "overwatch": str(attributes.get("overwatch.reason") or ""),
+                "readable": readable_segment(str(body)),
             }
         )
     items = []
     for sid in sorted(grouped):
-        rows = grouped[sid]
-        linked = [row for row in rows if any(part.get("iri") for part in row["rich"])]
-        review = [row for row in rows if row.get("overwatch") and row not in linked]
-        others = [row for row in rows if row not in linked and row not in review]
-        others.sort(key=lambda item: item["generated_at"], reverse=True)
-        shown = (linked + review + others)[:40]
-        shown.sort(key=lambda item: item["generated_at"])
-        items.append({"id": sid, "traces": len(rows), "items": shown})
+        rows = [row for row in grouped[sid] if _admitted_passage(row)]
+        if not rows:
+            continue
+        for row in rows:
+            row.pop("readable", None)
+        rows.sort(key=lambda item: item["generated_at"])
+        linked = sum(1 for row in rows if any(part.get("iri") for part in row["rich"]))
+        items.append({"id": sid, "traces": len(rows), "linked": linked, "items": rows})
     return items
+
+
+def _admitted_passage(row: dict) -> bool:
+    """A term link is enough. An admitted passage with no link must be readable prose."""
+
+    if any(part.get("iri") for part in row.get("rich") or []):
+        return True
+    admitted = bool(row.get("genus_code") or row.get("genus_iri") or row.get("overwatch"))
+    return bool(row.get("readable")) and admitted
 
 
 def build_lineup(
