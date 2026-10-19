@@ -70,6 +70,7 @@ from pathlib import Path
 from optagent.backfill import run
 from optagent.classify import classify_snapshot
 from optagent.enriched import pack_snapshot, publish
+from optagent.snapshot_cache import warm_snapshot_caches
 from optagent.snapshot_store import install_archive
 
 opt = Path(os.environ["OPTAGENT_ROOT"])
@@ -98,5 +99,6 @@ document_path.write_text(json.dumps(document, indent=2) + "\n", encoding="utf-8"
 shipped = publish(dest)
 print({"publish": shipped}, flush=True)
 installed = install_archive(pack_snapshot(dest))
+warm_snapshot_caches()
 print({"installed": installed.get("snapshot-id"), "parent": previous}, flush=True)
 PY

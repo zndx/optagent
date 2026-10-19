@@ -213,6 +213,51 @@ def test_summary_reads_the_varnish_lineup(monkeypatch) -> None:
     assert "ranges=" not in url
 
 
+def test_a_new_snapshot_warms_varnish_without_a_page_view(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))
+    monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "6095")
+    root = tmp_path / "signals-snapshot"
+    root.mkdir()
+    (root / "signals-snapshot.json").write_text(
+        json.dumps(
+            {
+                "format": "signals-snapshot",
+                "format-version": 2,
+                "snapshot-id": "00000000-0000-7000-8000-0000000000cc",
+                "sequence-number": 1,
+                "timestamp-ms": 10,
+                "summary": {},
+                "members": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    seen: list[str] = []
+
+    class Response(io.BytesIO):
+        def __enter__(self) -> "Response":
+            return self
+
+        def __exit__(self, *args) -> bool:
+            return False
+
+    def fake_open(url, timeout=0):
+        seen.append(str(url))
+        return Response(b"{}")
+
+    monkeypatch.setattr("optagent.snapshot_cache.urllib.request.urlopen", fake_open)
+    from optagent.snapshot_cache import warm_snapshot_caches
+
+    warm_snapshot_caches()
+    assert any("snapshot_origin?rev=" in url for url in seen)
+    assert any("sessions_origin?rev=" in url for url in seen)
+    assert any("kind=lineup" in url and "snapshot=00000000-0000-7000-8000-0000000000cc" in url for url in seen)
+    assert any("kind=window" in url and "window=24h" in url for url in seen)
+    assert any("kind=window" in url and "window=all" in url for url in seen)
+    assert not any("kind=ranges" in url for url in seen)
+    assert len(seen) == 2 + 1 + 6
+
+
 def test_summary_window_is_its_own_cached_object(monkeypatch) -> None:
     monkeypatch.setenv("OPTAGENT_VARNISH_PORT", "6095")
     seen: dict[str, object] = {}

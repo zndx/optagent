@@ -237,6 +237,9 @@ def run(
 
         archive = _gzip(root)
         install_archive(archive.read_bytes())
+        from optagent.snapshot_cache import warm_snapshot_caches
+
+        warm_snapshot_caches()
         result["installed"] = str(archive)
     return result
 

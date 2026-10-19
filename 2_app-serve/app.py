@@ -778,20 +778,17 @@ def _sessions_origin(runtime) -> dict:
 
 
 def _summary_cache_query(raw: str, snapshot_id: str) -> str:
-    """One lineup per snapshot and window.
+    """One lineup per snapshot copy and window.
 
     Project, term, table, and bin choices are not part of the key. Those
     panels are already in the document, so a new path does not rebuild it.
     """
 
+    from optagent.snapshot_cache import cache_revision, lineup_query
+
     parsed = urllib.parse.parse_qs(raw)
     window = (parsed.get("window") or ["365d"])[0]
-    items = [("kind", "lineup")]
-    if snapshot_id:
-        items.append(("snapshot", snapshot_id))
-    if window != "365d":
-        items.append(("window", window))
-    return urllib.parse.urlencode(items)
+    return lineup_query(snapshot_id, cache_revision(), window)
 
 
 def _snapshot_now_ms() -> int:
@@ -811,10 +808,9 @@ def _snapshot_now_ms() -> int:
 def _window_cache_query(window: str, snapshot_id: str) -> str:
     """Timeline and tracing for one window. The ontology stays on the lineup object."""
 
-    items = [("kind", "window"), ("window", window or "365d")]
-    if snapshot_id:
-        items.append(("snapshot", snapshot_id))
-    return urllib.parse.urlencode(items)
+    from optagent.snapshot_cache import cache_revision, window_query
+
+    return window_query(window, snapshot_id, cache_revision())
 
 
 _WINDOW_CACHE: dict[tuple, dict] = {}
@@ -847,12 +843,10 @@ def _summary_range_query(raw: str, snapshot_id: str) -> str:
 
     parsed = urllib.parse.parse_qs(raw)
     ranges = _summary_ranges((parsed.get("ranges") or [""])[0])
-    items = [("kind", "ranges")]
-    if snapshot_id:
-        items.append(("snapshot", snapshot_id))
-    if ranges:
-        items.append(("ranges", ",".join(f"{start}:{end}" for start, end in ranges)))
-    return urllib.parse.urlencode(items)
+    from optagent.snapshot_cache import cache_revision, range_query
+
+    encoded = ",".join(f"{start}:{end}" for start, end in ranges)
+    return range_query(encoded, snapshot_id, cache_revision())
 
 
 _SESSION_CACHE: dict[int, dict[str, list]] = {}
@@ -956,8 +950,12 @@ def _cached_json(runtime, name: str, origin) -> dict:
     from this process, and that handler returns the builder directly.
     """
 
+    from optagent.snapshot_cache import cache_revision, origin_query
+
     port = os.environ.get("OPTAGENT_VARNISH_PORT", "6095")
-    url = f"http://127.0.0.1:{port}/api/optagent/v1/{name}"
+    revision = origin_query(cache_revision())
+    suffix = f"?{revision}" if revision else ""
+    url = f"http://127.0.0.1:{port}/api/optagent/v1/{name}{suffix}"
     try:
         with urllib.request.urlopen(url, timeout=1.5) as response:
             loaded = json.load(response)
@@ -1055,6 +1053,8 @@ def response_for(
         except ValueError as exc:
             message = json.dumps({"error": str(exc)}).encode()
             return 400, "application/json; charset=utf-8", message, extra
+        else:
+            _start_snapshot_warm()
     elif method == "POST" and parsed.path in {
         "/api/optagent/v1/sample-mode",
         "/api/optagent/v1/brand",
@@ -1220,12 +1220,43 @@ def make_handler() -> type[BaseHTTPRequestHandler]:
     return Handler
 
 
+def _start_snapshot_warm() -> None:
+    """Fill Varnish off the request that installed the snapshot."""
+
+    import threading
+
+    from optagent.snapshot_cache import warm_snapshot_caches
+
+    threading.Thread(target=warm_snapshot_caches, name="optagent-snapshot-cache", daemon=True).start()
+
+
+def _warm_after_bind(port: int) -> None:
+    import socket
+
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        return
+    from optagent.snapshot_cache import warm_snapshot_caches
+
+    warm_snapshot_caches()
+
+
 def serve(host: str | None = None) -> None:
+    import threading
+
     class Server(ThreadingHTTPServer):
         allow_reuse_address = True
 
     bind = host or listen_host()
-    server = Server((bind, app_port()), make_handler())
+    port = app_port()
+    server = Server((bind, port), make_handler())
+    threading.Thread(target=_warm_after_bind, args=(port,), name="optagent-snapshot-cache", daemon=True).start()
     print(f"serving on http://{bind}:{server.server_port}", flush=True)
     server.serve_forever()
 
