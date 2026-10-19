@@ -30,9 +30,10 @@ def test_session_ids_are_prefixed_and_bare_uuids_do_not_collide() -> None:
     assert metabase == f"metabase:{shared}"
     assert gaius != metabase
     assert session_id("hermes", "agent-rtc", "4fcf03d6b815") == "hermes:agent-rtc:4fcf03d6b815"
+    assert session_id("semantica", shared) == f"semantica:{shared}"
     assert trace_id_for("gaius", shared) != trace_id_for("metabase", shared)
     with pytest.raises(ValueError):
-        session_id("semantica", shared)
+        session_id("not-a-peer", shared)
 
 
 def test_one_thought_is_one_trace_and_the_project_is_on_the_resource() -> None:
