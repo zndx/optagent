@@ -93,6 +93,7 @@ type LineupDoc = {
   schema: LineupTable[];
   tracing: { window: string; projects: TracingProject[] };
   timeline?: TimelineDoc;
+  ranges?: TimelineBin[];
   sessions: { id: string; traces: number; linked?: number; items: LineupSessionItem[] }[];
   published: string[];
   product?: {
@@ -1704,11 +1705,31 @@ function WindowSelect({ windowId, onWindow }: { windowId: string; onWindow: (win
   );
 }
 
-function findDomain(timeline: TimelineDoc, code: string, start: number, end: number): TimelineDomain | undefined {
-  if (start === timeline.start && end === timeline.end) {
+function findRange(view: LineupDoc, start: number, end: number): TimelineBin | undefined {
+  const timeline = view.timeline;
+  return timeline?.bins.find((bin) => bin.start === start && bin.end === end)
+    || view.ranges?.find((bin) => bin.start === start && bin.end === end);
+}
+
+function findDomain(view: LineupDoc, code: string, start: number, end: number): TimelineDomain | undefined {
+  const timeline = view.timeline;
+  if (timeline && start === timeline.start && end === timeline.end) {
     return timeline.domains.find((domain) => domain.code === code);
   }
-  return timeline.bins.find((bin) => bin.start === start && bin.end === end)?.domains.find((domain) => domain.code === code);
+  return findRange(view, start, end)?.domains.find((domain) => domain.code === code);
+}
+
+function trailRanges(trail: TrailStop[]): string {
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  for (const stop of trail) {
+    if (stop.kind !== "bin" && stop.kind !== "domain") continue;
+    const key = `${stop.start}:${stop.end}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    parts.push(key);
+  }
+  return parts.join(",");
 }
 
 function TrailPanels({
@@ -1829,7 +1850,7 @@ function TrailPanels({
             );
           }
           if (stop.kind === "bin") {
-            const bin = timeline.bins.find((item) => item.start === stop.start);
+            const bin = findRange(view, stop.start, stop.end);
             return (
               <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
                 <header className="sum-panel-head">
@@ -1874,14 +1895,14 @@ function TrailPanels({
                       ) : null}
                     </>
                   ) : (
-                    <p>This timeframe is outside the selected window.</p>
+                    <p>{loading ? "Loading this bin…" : "No traces in this bin."}</p>
                   )}
                 </div>
               </article>
             );
           }
           if (stop.kind === "domain") {
-            const domain = findDomain(timeline, stop.code, stop.start, stop.end);
+            const domain = findDomain(view, stop.code, stop.start, stop.end);
             const title = domain ? domainTitle(domain, byIri) : stop.code;
             return (
               <article className="sum-panel" key={`${trailKey(stop)}:${index}`}>
@@ -1935,7 +1956,7 @@ function TrailPanels({
                       )}
                     </>
                   ) : (
-                    <p>This domain is outside the selected window.</p>
+                    <p>{loading ? "Loading this domain…" : "No traces for this domain in this bin."}</p>
                   )}
                 </div>
               </article>
@@ -2251,7 +2272,7 @@ function TrailPanels({
                     />
                   </div>
                 )) : (
-                  <p>{loading ? "Loading the segment…" : "This segment is not in the loaded window."}</p>
+                  <p>{loading ? "Loading the segment…" : "This segment has no admitted passage in the snapshot."}</p>
                 )}
                 {term ? (
                   <p>
@@ -2294,7 +2315,7 @@ function TrailPanels({
                   )}
                 </div>
               )) : (
-                <p>{loading ? "Loading sessions…" : "This session is not in the loaded project window."}</p>
+                <p>{loading ? "Loading sessions…" : "This session has no admitted passage in the snapshot."}</p>
               )}
             </div>
           </article>
@@ -2317,6 +2338,8 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
   useEffect(() => {
     const params = new URLSearchParams({ window: windowId });
     if (project) params.set("project", project);
+    const ranges = trailRanges(trail);
+    if (ranges) params.set("ranges", ranges);
     let cancelled = false;
     setLoading(true);
     fetch(`/api/optagent/v1/summary?${params.toString()}`)
@@ -2331,7 +2354,7 @@ function LineupSummary({ lineup }: { lineup: LineupDoc }) {
     return () => {
       cancelled = true;
     };
-  }, [windowId, project]);
+  }, [windowId, project, trail]);
   useEffect(() => {
     const wanted = projectFromTrail(trail);
     setProject((current) => (current === wanted ? current : wanted));

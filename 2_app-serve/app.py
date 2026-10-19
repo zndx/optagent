@@ -681,6 +681,31 @@ def _summary_origin(runtime) -> dict:
     }
 
 
+def _summary_ranges(raw: str) -> list[tuple[int, int]]:
+    """Bin ranges named by the lineup path. Capped so a query cannot scan arbitrary history widths."""
+
+    found: list[tuple[int, int]] = []
+    seen: set[tuple[int, int]] = set()
+    for part in (raw or "").split(","):
+        if part.count(":") != 1:
+            continue
+        left, right = part.split(":", 1)
+        try:
+            start, end = int(left), int(right)
+        except ValueError:
+            continue
+        if end <= start or end - start > 400 * 86_400_000:
+            continue
+        key = (start, end)
+        if key in seen:
+            continue
+        seen.add(key)
+        found.append(key)
+        if len(found) >= 8:
+            break
+    return found
+
+
 def _loaded_spans(runtime) -> list:
     from pathlib import Path
 
@@ -834,6 +859,7 @@ def response_for(
         query = urllib.parse.parse_qs(parsed.query)
         window = (query.get("window") or ["365d"])[0]
         project = (query.get("project") or [""])[0]
+        ranges = _summary_ranges((query.get("ranges") or [""])[0])
         archive_root = state_dir() / "archive"
         archived = sorted(path.name for path in archive_root.iterdir()) if archive_root.is_dir() else []
         live = bool(os.environ.get("OPTAGENT_TRACE_STREAM", "").strip()) and not os.environ.get("CDSW_APP_PORT")
@@ -845,6 +871,7 @@ def response_for(
             live=live,
             project=project,
             product=product,
+            ranges=ranges,
         )
         return 200, "application/json; charset=utf-8", json.dumps(document).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions":

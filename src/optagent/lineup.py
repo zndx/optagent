@@ -419,6 +419,18 @@ def _bin_index(bins: list[tuple[int, int]], stamp: int, end_ms: int) -> int:
     return -1
 
 
+def range_slice(spans: list[dict], start_ms: int, end_ms: int) -> dict:
+    """Stats for an arbitrary half-open range, including bins the current window does not contain."""
+
+    bucket = _fresh()
+    for span in spans:
+        stamp = _generated_ms(span)
+        if stamp < start_ms or stamp >= end_ms:
+            continue
+        _observe(bucket, span, nest=True)
+    return {"start": start_ms, "end": end_ms, **_publish(bucket, nest=True)}
+
+
 def timeline_report(spans: list[dict], *, now_ms: int, window: str = "365d") -> dict:
     """Histogram bins for one window, with overall stats and topic-domain stats in each bin."""
 
@@ -582,12 +594,11 @@ def session_items(spans: list[dict], project: str) -> list[dict]:
 
 
 def _admitted_passage(row: dict) -> bool:
-    """A term link is enough. An admitted passage with no link must be readable prose."""
+    """A term link or an aperture genus keeps the passage, including an unreadable admission."""
 
     if any(part.get("iri") for part in row.get("rich") or []):
         return True
-    admitted = bool(row.get("genus_code") or row.get("genus_iri") or row.get("overwatch"))
-    return bool(row.get("readable")) and admitted
+    return bool(row.get("genus_code") or row.get("genus_iri") or row.get("overwatch"))
 
 
 def build_lineup(
@@ -599,6 +610,7 @@ def build_lineup(
     live: bool = False,
     project: str = "",
     product: dict | None = None,
+    ranges: list[tuple[int, int]] | None = None,
 ) -> dict:
     root = corpora_root()
     lexicon = load_lexicon(root)
@@ -620,6 +632,7 @@ def build_lineup(
         "timeline": timeline_report(spans, now_ms=now_ms, window=window),
         "sessions": session_items(spans, project) if project else [],
         "published": sorted(published),
+        "ranges": [range_slice(spans, start, end) for start, end in (ranges or [])],
     }
     if product and product.get("id") and product.get("version"):
         body["product"] = {

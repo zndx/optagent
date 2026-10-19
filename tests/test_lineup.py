@@ -213,6 +213,33 @@ def test_each_bin_counts_topic_domains_without_invented_metrics() -> None:
     assert report["domains"][0]["code"] == "16.2"
 
 
+def test_a_named_range_renders_outside_the_selected_window() -> None:
+    stamp = 1_700_000_000_000
+    span = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:1",
+        name="old",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="old",
+        start_time_unix_nano=stamp * 1_000_000,
+        output_value="The specimen is accessioned in the laboratory and the lineage stays with the sample.",
+        attributes={"aegir.genus_code": "18.1", "aegir.genus_label": "Model-Based Systems Engineering"},
+    )
+    lineup = build_lineup(
+        [span],
+        now_ms=stamp + 3 * 86_400_000,
+        window="24h",
+        ranges=[(stamp, stamp + 3_600_000)],
+    )
+    assert all(item["start"] != stamp for item in lineup["timeline"]["bins"])
+    report = lineup["ranges"][0]
+    assert report["traces"] == 1
+    assert report["domains"][0]["code"] == "18.1"
+    assert report["domains"][0]["top_sessions"][0]["id"] == "hermes:agent-rtc:1"
+
+
 def test_session_list_keeps_linked_and_unlinked_admitted_passages() -> None:
     stamp = 1_700_000_000_000_000_000
     linked_text = "The specimen is accessioned in the laboratory and the lineage of that sample stays attached."
@@ -277,3 +304,17 @@ def test_session_list_keeps_linked_and_unlinked_admitted_passages() -> None:
     assert sessions[0]["linked"] == 1
     names = [item["name"] for item in sessions[0]["items"]]
     assert names == ["linked", "unlinked"]
+    dump = make_span(
+        project="hermes",
+        session="hermes:agent-rtc:1",
+        name="dump",
+        activity="agent-rtc",
+        capability="conversation",
+        service_name="agent-rtc",
+        trace_key="dump",
+        start_time_unix_nano=stamp + 3_000_000,
+        output_value='{"content": "1|--- title: a file dump with many tokens and extra words"}',
+        attributes={"aegir.genus_code": "18.1", "aegir.genus_label": "Model-Based Systems Engineering"},
+    )
+    with_dump = session_items([*spans, dump], "hermes")
+    assert [item["name"] for item in with_dump[0]["items"]] == ["linked", "unlinked", "dump"]
