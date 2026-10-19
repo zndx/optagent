@@ -581,12 +581,13 @@ def build_lineup(
     archive: list[str] | None = None,
     live: bool = False,
     project: str = "",
+    product: dict | None = None,
 ) -> dict:
     root = corpora_root()
     lexicon = load_lexicon(root)
     published = {item["iri"] for item in lexicon}
     checkout = checkout_sha(root)
-    return {
+    body = {
         "pin": SDG_PIN,
         "checkout": checkout,
         "pin_matches": bool(checkout) and checkout == SDG_PIN,
@@ -603,3 +604,13 @@ def build_lineup(
         "sessions": session_items(spans, project) if project else [],
         "published": sorted(published),
     }
+    if product and product.get("id") and product.get("data_uri"):
+        body["product"] = {
+            "id": str(product.get("id") or ""),
+            "iteration": str(product.get("iteration") or ""),
+            "data_uri": str(product.get("data_uri") or ""),
+            "tx_id": str(product.get("tx_id") or ""),
+            "rows": str(product.get("rows") or ""),
+            "links": str(product.get("links") or ""),
+        }
+    return body

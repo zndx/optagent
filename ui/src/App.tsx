@@ -95,6 +95,14 @@ type LineupDoc = {
   timeline?: TimelineDoc;
   sessions: { id: string; traces: number; items: LineupSessionItem[] }[];
   published: string[];
+  product?: {
+    id: string;
+    iteration: string;
+    data_uri: string;
+    tx_id?: string;
+    rows?: string;
+    links?: string;
+  };
 };
 type SummaryDoc = {
   groups?: SummaryGroup[];
@@ -1945,6 +1953,21 @@ function TrailPanels({
               <div className="sum-panel-body">
                 <p><strong>Timeline.</strong> {windowLabel}, {timeline.unit} bins, {formatRange(timeline.start, timeline.end)}.</p>
                 <PropTable rows={statRows(timeline.totals)} />
+                {view.product?.id ? (
+                  <>
+                    <p className="sum-section">Baseline.</p>
+                    <PropTable
+                      rows={[
+                        ["product", view.product.id],
+                        ["iteration", view.product.iteration || "1"],
+                        ["rows", view.product.rows || ""],
+                        ["links", view.product.links || ""],
+                        ["data", view.product.data_uri],
+                        ...(view.product.tx_id ? [["tx", view.product.tx_id] as [string, string]] : []),
+                      ]}
+                    />
+                  </>
+                ) : null}
                 <p>
                   <Follow token="trends" label="Trends" onOpen={(token) => onOpen(index, token)} />
                 </p>

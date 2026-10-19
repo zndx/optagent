@@ -812,9 +812,21 @@ def response_for(
         return 200, "application/json; charset=utf-8", json.dumps(_sessions_origin(runtime)).encode(), extra
     if parsed.path == "/api/optagent/v1/summary":
         from optagent.lineup import build_lineup
-        from optagent.snapshot_store import state_dir
+        from optagent.snapshot_store import installed_document, state_dir
 
         document = _cached_json(runtime, "summary_origin", _summary_origin)
+        installed = installed_document() or {}
+        summary = installed.get("summary") if isinstance(installed.get("summary"), dict) else {}
+        product = None
+        if summary.get("product.id") and summary.get("product.data_uri"):
+            product = {
+                "id": summary.get("product.id"),
+                "iteration": summary.get("product.iteration") or "",
+                "data_uri": summary.get("product.data_uri"),
+                "tx_id": summary.get("product.tx_id") or "",
+                "rows": summary.get("product.rows") or "",
+                "links": summary.get("product.links") or "",
+            }
         query = urllib.parse.parse_qs(parsed.query)
         window = (query.get("window") or ["365d"])[0]
         project = (query.get("project") or [""])[0]
@@ -828,6 +840,7 @@ def response_for(
             archive=archived,
             live=live,
             project=project,
+            product=product,
         )
         return 200, "application/json; charset=utf-8", json.dumps(document).encode(), extra
     if parsed.path == "/api/optagent/v1/sessions":
