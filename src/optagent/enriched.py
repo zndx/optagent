@@ -15,9 +15,9 @@ import os
 import subprocess
 import tarfile
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
-from optagent.backfill import TAU, readable_segment, span_ms, span_text
+from optagent.backfill import TAU, readable_segment, span_text
 from optagent.phoenix_spans import read_jsonl
 
 PRODUCT_ID = "optagent.traces.snapshot"
@@ -76,16 +76,17 @@ def _link(item: dict) -> dict | None:
     return link
 
 
-def project_rows(spans: list[dict], snapshot_id: str) -> tuple[list[dict], int]:
-    """Readable admitted passages. Returns rows and the unreadable admission count.
+def enrichment_counts(spans: list[dict]) -> dict:
+    """Count enrichment already stored on snapshot spans.
 
-    Offsets and confidences are copied. A passage with no term link stays in
-    the product so the baseline shows the miss. Unreadable windows are counted
-    and left out of the object.
+    This does not copy passage text into another document. A link counts only
+    when its offsets match the span text.
     """
 
-    rows = []
-    unreadable = 0
+    rows = linked_rows = links = unreadable = 0
+    sessions: set[str] = set()
+    overwatch: set[str] = set()
+    models: set[str] = set()
     for span in spans:
         attributes = span.get("attributes") if isinstance(span.get("attributes"), dict) else {}
         if not attributes.get("aegir.genus_code"):
@@ -94,63 +95,40 @@ def project_rows(spans: list[dict], snapshot_id: str) -> tuple[list[dict], int]:
         if not readable_segment(text):
             unreadable += 1
             continue
-        resource = span.get("resource") if isinstance(span.get("resource"), dict) else {}
-        links = []
+        rows += 1
+        session_id = str(attributes.get("session.id") or "")
+        if session_id:
+            sessions.add(session_id)
+        kept = 0
         for item in attributes.get("sdg.spans") or []:
             link = _link(item)
             if link is not None and text[link["start"] : link["end"]] == link["text"]:
-                links.append(link)
-        row: dict[str, Any] = {
-            "product_id": PRODUCT_ID,
-            "snapshot_id": snapshot_id,
-            "project": str(resource.get("openinference.project.name") or ""),
-            "session_id": str(attributes.get("session.id") or ""),
-            "trace_id": str(span.get("trace_id") or ""),
-            "generated_at_ms": span_ms(span),
-            "genus_code": str(attributes.get("aegir.genus_code") or ""),
-            "genus_iri": str(attributes.get("aegir.genus_iri") or ""),
-            "genus_label": str(attributes.get("aegir.genus_label") or ""),
-            "text": text,
-            "links": links,
-        }
-        if attributes.get("aegir.rel_margin_h") not in (None, ""):
-            row["rel_margin_h"] = attributes.get("aegir.rel_margin_h")
-        if attributes.get("aegir.tau") not in (None, ""):
-            row["tau"] = attributes.get("aegir.tau")
-        if attributes.get("overwatch.reason"):
-            row["overwatch_reason"] = str(attributes["overwatch.reason"])
+                kept += 1
+        if kept:
+            linked_rows += 1
+            links += kept
+        if attributes.get("overwatch.reason") and session_id:
+            overwatch.add(session_id)
         if attributes.get("typesafe.model"):
-            row["typesafe_model"] = str(attributes["typesafe.model"])
-        for source, target in (
-            ("typesafe.input_tokens", "typesafe_input_tokens"),
-            ("typesafe.output_tokens", "typesafe_output_tokens"),
-        ):
-            if source in attributes:
-                try:
-                    row[target] = int(attributes[source])
-                except (TypeError, ValueError):
-                    continue
-        rows.append(row)
-    rows.sort(key=lambda item: (int(item["generated_at_ms"]), item["trace_id"]))
-    return rows, unreadable
+            models.add(str(attributes["typesafe.model"]))
+    return {
+        "rows": rows,
+        "linked_rows": linked_rows,
+        "links": links,
+        "sessions": len(sessions),
+        "overwatch_sessions": len(overwatch),
+        "admitted_unreadable": unreadable,
+        "tau": TAU,
+        "models": sorted(models),
+    }
 
 
-def build_manifest(rows: list[dict], snapshot_id: str, *, unreadable: int, parent_snapshot_id: str = "") -> dict:
-    linked_rows = [row for row in rows if row["links"]]
-    overwatch = {row["session_id"] for row in rows if row.get("overwatch_reason")}
-    models = sorted({row["typesafe_model"] for row in rows if row.get("typesafe_model")})
+def build_manifest(counts: dict, snapshot_id: str, *, parent_snapshot_id: str = "") -> dict:
     return {
         "product_id": PRODUCT_ID,
         "snapshot_id": snapshot_id,
         "parent_snapshot_id": parent_snapshot_id,
-        "rows": len(rows),
-        "linked_rows": len(linked_rows),
-        "links": sum(len(row["links"]) for row in rows),
-        "sessions": len({row["session_id"] for row in rows if row["session_id"]}),
-        "overwatch_sessions": len(overwatch),
-        "admitted_unreadable": unreadable,
-        "tau": TAU,
-        "models": models,
+        **counts,
     }
 
 
@@ -439,8 +417,8 @@ def publish(
     document = json.loads((root / "signals-snapshot.json").read_text(encoding="utf-8"))
     snapshot_id, spans = load_snapshot(root)
     parent = str(document.get("parent-snapshot-id") or "")
-    rows, unreadable = project_rows(spans, snapshot_id)
-    manifest = build_manifest(rows, snapshot_id, unreadable=unreadable, parent_snapshot_id=parent)
+    counts = enrichment_counts(spans)
+    manifest = build_manifest(counts, snapshot_id, parent_snapshot_id=parent)
     uri = data_uri(snapshot_id)
     endpoint = endpoint or os.environ.get("METAFLOW_S3_ENDPOINT_URL") or "http://127.0.0.1:9010"
     writer = put or (lambda target, body: put_rustfs(body, endpoint=endpoint, uri=target))

@@ -814,19 +814,23 @@ def response_for(
         from optagent.lineup import build_lineup
         from optagent.snapshot_store import installed_document, state_dir
 
+        from optagent.enriched import PRODUCT_ID, enrichment_counts
+
         document = _cached_json(runtime, "summary_origin", _summary_origin)
         installed = installed_document() or {}
         summary = installed.get("summary") if isinstance(installed.get("summary"), dict) else {}
-        product = None
-        if summary.get("product.id") and summary.get("product.data_uri"):
-            product = {
-                "id": summary.get("product.id"),
-                "version": summary.get("product.version") or "",
-                "data_uri": summary.get("product.data_uri"),
-                "tx_id": summary.get("product.tx_id") or "",
-                "rows": summary.get("product.rows") or "",
-                "links": summary.get("product.links") or "",
-            }
+        version = str(installed.get("snapshot-id") or document.get("snapshot-id") or "")
+        spans = _loaded_spans(runtime)
+        counts = enrichment_counts(spans)
+        shipped = summary.get("product.data_uri") if summary.get("product.version") == version else ""
+        product = {
+            "id": PRODUCT_ID,
+            "version": version,
+            "data_uri": shipped or "",
+            "tx_id": (summary.get("product.tx_id") or "") if shipped else "",
+            "rows": str(counts["rows"]),
+            "links": str(counts["links"]),
+        } if version else None
         query = urllib.parse.parse_qs(parsed.query)
         window = (query.get("window") or ["365d"])[0]
         project = (query.get("project") or [""])[0]
@@ -834,7 +838,7 @@ def response_for(
         archived = sorted(path.name for path in archive_root.iterdir()) if archive_root.is_dir() else []
         live = bool(os.environ.get("OPTAGENT_TRACE_STREAM", "").strip()) and not os.environ.get("CDSW_APP_PORT")
         document["lineup"] = build_lineup(
-            _loaded_spans(runtime),
+            spans,
             now_ms=int(time.time() * 1000),
             window=window,
             archive=archived,

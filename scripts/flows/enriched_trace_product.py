@@ -19,7 +19,7 @@ from __future__ import annotations
 from metaflow import FlowSpec, Parameter, step
 
 
-class EnrichedTraceProductFlow(FlowSpec):
+class SnapshotProductFlow(FlowSpec):
     snapshot = Parameter("snapshot", help="Unpacked signals-snapshot directory", required=True)
 
     @step
@@ -37,4 +37,4 @@ class EnrichedTraceProductFlow(FlowSpec):
 
 
 if __name__ == "__main__":
-    EnrichedTraceProductFlow()
+    SnapshotProductFlow()

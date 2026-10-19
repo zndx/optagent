@@ -604,7 +604,7 @@ def build_lineup(
         "sessions": session_items(spans, project) if project else [],
         "published": sorted(published),
     }
-    if product and product.get("id") and product.get("data_uri"):
+    if product and product.get("id") and product.get("version"):
         body["product"] = {
             "id": str(product.get("id") or ""),
             "version": str(product.get("version") or ""),

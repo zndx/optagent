@@ -6,7 +6,7 @@ import json
 import tarfile
 from pathlib import Path
 
-from optagent.enriched import PRODUCT_ID, build_manifest, pack_snapshot, product_facts, project_rows, publish
+from optagent.enriched import PRODUCT_ID, build_manifest, enrichment_counts, pack_snapshot, product_facts, publish
 from optagent.lineup import build_lineup
 from optagent.phoenix_spans import make_span, write_jsonl
 
@@ -90,22 +90,13 @@ def test_baseline_keeps_short_links_and_omits_scores(tmp_path: Path) -> None:
     from optagent.enriched import load_snapshot
 
     snapshot_id, spans = load_snapshot(root)
-    rows, unreadable = project_rows(spans, snapshot_id)
-    assert unreadable == 1
-    assert [row["trace_id"] != "" for row in rows]
-    replay = next(row for row in rows if row["genus_iri"] == LINEAGE)
-    assert replay["links"] == [{
-        "start": TEXT.index("provenance"),
-        "end": TEXT.index("provenance") + len("provenance"),
-        "text": "provenance",
-        "iri": LINEAGE,
-        "label": "Data Lineage and Provenance",
-        "confidence": 0.99,
-    }]
-    assert replay["text"] == TEXT
-    assert replay["typesafe_input_tokens"] == 40
-    assert "factors" not in replay
-    manifest = build_manifest(rows, snapshot_id, unreadable=unreadable)
+    counts = enrichment_counts(spans)
+    assert counts["admitted_unreadable"] == 1
+    assert counts["rows"] == 2
+    assert counts["links"] == 1
+    assert counts["overwatch_sessions"] == 1
+    assert "factors" not in counts
+    manifest = build_manifest(counts, snapshot_id)
     assert manifest["snapshot_id"] == "snap-1"
     assert manifest["links"] == 1
     assert manifest["overwatch_sessions"] == 1
