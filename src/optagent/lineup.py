@@ -16,7 +16,7 @@ from pathlib import Path
 
 from optagent.phoenix_spans import rich_segments
 
-SDG_PIN = "b24ef9f606605dd7bb8877bddd2d9672c78282ad"
+SDG_PIN = "97957d0ae2b210b75b4eaedf5ae6588ff84126b9"
 SDG_IRI = "https://signals.zndx.org/sdg#"
 _HOUR_MS = 3_600_000
 _DAY_MS = 86_400_000
