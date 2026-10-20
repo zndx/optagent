@@ -115,6 +115,18 @@ def first_command(session_id: str) -> list[str]:
     return __import__("optagent.terminal_host", fromlist=["get_session"]).get_session(session_id).command
 
 
+def test_a_project_grok_is_used_when_the_env_bin_is_absent(monkeypatch, tmp_path) -> None:
+    binary = tmp_path / "grok"
+    binary.write_text("#!/bin/sh\n", encoding="utf-8")
+    binary.chmod(0o755)
+    monkeypatch.delenv("OPTAGENT_GROK_BIN", raising=False)
+    monkeypatch.delenv("GAIUS_GROK_BIN", raising=False)
+    monkeypatch.setattr("optagent.terminal_host.shipped_grok", lambda: binary)
+    from optagent.terminal_host import grok_bin
+
+    assert grok_bin() == binary
+
+
 def test_missing_grok_still_records_a_server_session(monkeypatch, tmp_path) -> None:
     _reset()
     monkeypatch.setenv("OPTAGENT_SESSION_DIR", str(tmp_path))

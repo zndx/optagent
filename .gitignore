@@ -22,6 +22,11 @@ __pycache__/
 .mypy_cache/
 .ruff_cache/
 
+# Compiled terminal artifacts for an AMP upload. GitHub rejects the grok blob.
+/bin/grok
+/bin/*.tmp
+/build/amp-terminal/
+
 # Written by the prepare job
 assets/data/*.json
 

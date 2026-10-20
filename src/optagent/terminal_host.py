@@ -34,11 +34,23 @@ _LOCK = threading.Lock()
 _SESSIONS: dict[str, "TerminalSession"] = {}
 
 
+def shipped_grok() -> Path | None:
+    """Prebuilt binary downloaded by the AMP install job."""
+
+    candidate = Path(__file__).resolve().parents[2] / "bin" / "grok"
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return candidate
+    return None
+
+
 def grok_bin() -> Path | None:
     for key in ("OPTAGENT_GROK_BIN", "GAIUS_GROK_BIN"):
         raw = os.environ.get(key, "").strip()
         if raw and Path(raw).is_file() and os.access(raw, os.X_OK):
             return Path(raw)
+    shipped = shipped_grok()
+    if shipped is not None:
+        return shipped
     home = Path.home() / ".local" / "bin" / "grok"
     if home.is_file() and os.access(home, os.X_OK):
         return home
@@ -588,7 +600,10 @@ class TerminalSession:
         home.mkdir(parents=True, exist_ok=True)
         if binary is None:
             self.status = "grok-missing"
-            self.detail = "grok is not installed. In this repo run `just grok-build`."
+            self.detail = (
+                "grok is not installed. The AMP install job downloads the pinned "
+                "binary to bin/grok. On a workstation run `just grok-build`."
+            )
             self._append((self.detail + "\r\n").encode())
             return
         try:
